@@ -1,0 +1,39 @@
+import { Module } from '@nestjs/common';
+import { ConfigModule } from '@nestjs/config';
+import configuration from './config/configuration';
+import { DatabaseModule } from './database/database.module';
+import { EstablishmentsModule } from './modules/global/establishments/establishments.module';
+import { AuthModule } from './modules/tenant/auth/auth.module';
+import { UsersModule } from './modules/tenant/users/users.module';
+import { CatalogModule } from './modules/tenant/catalog/catalog.module';
+import { StockModule } from './modules/tenant/stock/stock.module';
+import { SalesModule } from './modules/tenant/sales/sales.module';
+import { InvoicesModule } from './modules/tenant/invoices/invoices.module';
+import { CustomersModule } from './modules/tenant/customers/customers.module';
+import { SuppliersModule } from './modules/tenant/suppliers/suppliers.module';
+import { RepairsModule } from './modules/tenant/repairs/repairs.module';
+import { WarrantiesModule } from './modules/tenant/warranties/warranties.module';
+import { AnalyticsModule } from './modules/tenant/analytics/analytics.module';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+      load: [configuration],
+    }),
+    DatabaseModule,
+    EstablishmentsModule,
+    AuthModule,
+    UsersModule,
+    CatalogModule,
+    StockModule,
+    SalesModule,
+    InvoicesModule,
+    CustomersModule,
+    SuppliersModule,
+    RepairsModule,
+    WarrantiesModule,
+    AnalyticsModule,
+  ],
+})
+export class AppModule {}
