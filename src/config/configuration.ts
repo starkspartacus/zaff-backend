@@ -1,11 +1,18 @@
-export default () => ({
-  port: parseInt(process.env.PORT || '8000', 10),
-  mongodb: {
-    uri: process.env.MONGODB_URI || 'mongodb+srv://cinqspartacus_db_user:3POJSanOGRcTluuu@cluster0.a026nzb.mongodb.net',
-    globalDbName: process.env.GLOBAL_DATABASE_NAME || 'zaff_global',
-  },
-  jwt: {
-    secret: process.env.JWT_SECRET || 'zaff_jwt_secret_token_secure_key_2026',
-    expiresIn: process.env.JWT_EXPIRES_IN || '7d',
-  },
-});
+import { validateEnv } from './env.validation';
+
+/** Configuration de l'application : uniquement à partir des variables d'environnement validées */
+export default () => {
+  const env = validateEnv(process.env);
+  return {
+    nodeEnv: env.NODE_ENV,
+    port: env.PORT,
+    mongodb: {
+      uri: env.MONGODB_URI,
+      globalDbName: env.GLOBAL_DATABASE_NAME,
+    },
+    jwt: {
+      secret: env.JWT_SECRET,
+      expiresIn: env.JWT_EXPIRES_IN,
+    },
+  };
+};

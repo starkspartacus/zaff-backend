@@ -16,7 +16,7 @@ import { NotificationsController } from '../tenant/notifications/notifications.c
     EstablishmentsModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
-      useFactory: (config: ConfigService) => ({ secret: config.get<string>('jwt.secret') }),
+      useFactory: (config: ConfigService) => ({ secret: config.getOrThrow<string>('jwt.secret') }),
       inject: [ConfigService],
     }),
   ],

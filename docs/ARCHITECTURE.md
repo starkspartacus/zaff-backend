@@ -55,6 +55,12 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 - Messages d'erreur métier en français, compréhensibles par un vendeur (« L'appareil X a déjà été vendu (facture #1001) »).
 - Téléphones normalisés avec `normalizePhone` / `normalizeIdentifier` (`common/utils/identifier.ts`) avant stockage.
 - Port 8000 par défaut, préfixe `/api`, Swagger sur `/api/docs`.
+- **Aucun secret dans le code.** Configuration lue uniquement depuis l'environnement et validée au démarrage
+  (`src/config/env.validation.ts`) : `MONGODB_URI` et `JWT_SECRET` obligatoires (JWT ≥ 32 caractères en
+  production), sinon l'app refuse de démarrer. En local : copier `.env.example` en `.env` (ignoré par git).
+  Lire la config avec `getOrThrow`, jamais de valeur de repli pour un secret.
+- ⚠️ Un ancien mot de passe MongoDB et un ancien secret JWT figurent dans l'historique git (avant cette règle) :
+  à changer dans Atlas et à régénérer avant la mise en production.
 
 ## Vérifier un changement
 - `npx tsc --noEmit -p tsconfig.json` puis `npm run build`

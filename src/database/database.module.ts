@@ -11,8 +11,8 @@ import { TenantConnectionService } from './tenant-connection.service';
       connectionName: GLOBAL_CONNECTION,
       imports: [ConfigModule],
       useFactory: (configService: ConfigService) => {
-        const uri = configService.get<string>('mongodb.uri');
-        const dbName = configService.get<string>('mongodb.globalDbName');
+        const uri = configService.getOrThrow<string>('mongodb.uri');
+        const dbName = configService.getOrThrow<string>('mongodb.globalDbName');
         return {
           uri: `${uri}/${dbName}?retryWrites=true&w=majority`,
         };

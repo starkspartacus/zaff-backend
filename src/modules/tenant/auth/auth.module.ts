@@ -13,8 +13,8 @@ import { JwtStrategy } from './jwt.strategy';
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('jwt.secret') || 'zaff_jwt_secret_token_secure_key_2026',
-        signOptions: { expiresIn: config.get<string>('jwt.expiresIn') || '7d' },
+        secret: config.getOrThrow<string>('jwt.secret'),
+        signOptions: { expiresIn: config.getOrThrow<string>('jwt.expiresIn') },
       }),
       inject: [ConfigService],
     }),
