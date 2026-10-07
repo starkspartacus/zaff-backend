@@ -11,6 +11,12 @@ export class Product {
   @Prop({ required: true, unique: true, uppercase: true, trim: true, index: true })
   sku: string;
 
+  @Prop({ trim: true, default: null, index: true })
+  barcode: string;
+
+  @Prop({ default: false })
+  hasSerialNumbers: boolean;
+
   @Prop({ required: true, trim: true })
   category: string;
 

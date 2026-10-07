@@ -56,7 +56,7 @@ async function bootstrap() {
     },
   });
 
-  const port = configService.get<number>('port') || 8000;
+  const port = configService.get<number>('port', 8000);
   await app.listen(port);
   logger.log(`=======================================================`);
   logger.log(`🚀 ZAFF Backend is running on: http://localhost:${port}/api`);

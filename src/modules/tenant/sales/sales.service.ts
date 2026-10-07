@@ -84,6 +84,7 @@ export class SalesService {
       subtotal: dto.subtotal,
       discount: dto.discount || 0,
       total: dto.total,
+      paidAmount: dto.paidAmount ?? dto.total,
       paymentMethod: dto.paymentMethod,
       saleType: dto.saleType,
       items: dto.items.map((i) => ({

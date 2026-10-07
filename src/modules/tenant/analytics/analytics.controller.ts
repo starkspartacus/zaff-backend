@@ -1,5 +1,5 @@
-import { Controller, Get, UseGuards } from '@nestjs/common';
-import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
+import { Controller, Get, Query, UseGuards } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { AnalyticsService } from './analytics.service';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../../../common/guards/tenant.guard';
@@ -18,8 +18,9 @@ export class AnalyticsController {
   @Get('dashboard')
   @Roles(Role.ADMIN, Role.SUPERADMIN)
   @ApiOperation({ summary: 'KPIs Dashboard et vue synthétique financière' })
-  getDashboardStats(@CurrentTenant('databaseName') db: string) {
-    return this.analyticsService.getDashboardStats(db);
+  @ApiQuery({ name: 'period', required: false, enum: ['day', 'week', 'month', 'year', 'all'] })
+  getDashboardStats(@CurrentTenant('databaseName') db: string, @Query('period') period?: string) {
+    return this.analyticsService.getDashboardStats(db, period);
   }
 
   @Get('reports')

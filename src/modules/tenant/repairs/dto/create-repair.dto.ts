@@ -3,10 +3,20 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { RepairStatus } from '../../../../common/enums/repair-status.enum';
 
 export class CreateRepairDto {
-  @ApiProperty()
+  @ApiPropertyOptional({ description: 'Client existant (sinon customerName / customerPhone)' })
   @IsString()
-  @IsNotEmpty()
-  customerId: string;
+  @IsOptional()
+  customerId?: string;
+
+  @ApiPropertyOptional({ example: 'Michel Koffi' })
+  @IsString()
+  @IsOptional()
+  customerName?: string;
+
+  @ApiPropertyOptional({ example: '+2250701020304' })
+  @IsString()
+  @IsOptional()
+  customerPhone?: string;
 
   @ApiPropertyOptional()
   @IsString()

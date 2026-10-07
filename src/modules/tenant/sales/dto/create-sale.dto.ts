@@ -88,6 +88,11 @@ export class CreateSaleDto {
   @IsNumber()
   total: number;
 
+  @ApiPropertyOptional({ example: 800000, description: 'Montant remis par le client' })
+  @IsNumber()
+  @IsOptional()
+  paidAmount?: number;
+
   @ApiProperty({ enum: PaymentMethod, default: PaymentMethod.CASH })
   @IsEnum(PaymentMethod)
   paymentMethod: PaymentMethod;

@@ -58,6 +58,9 @@ export class Sale {
   @Prop({ required: true, default: 0 })
   total: number;
 
+  @Prop({ default: null })
+  paidAmount: number;
+
   @Prop({ enum: PaymentMethod, default: PaymentMethod.CASH })
   paymentMethod: PaymentMethod;
 

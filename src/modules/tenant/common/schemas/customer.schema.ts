@@ -23,6 +23,9 @@ export class Customer {
   @Prop({ trim: true, default: null })
   address: string;
 
+  @Prop({ trim: true, default: null })
+  companyName: string;
+
   @Prop({ default: null })
   notes: string;
 

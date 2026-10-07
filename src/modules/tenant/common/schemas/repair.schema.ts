@@ -6,6 +6,9 @@ export type RepairDocument = Repair & Document;
 
 @Schema({ timestamps: true, collection: 'repairs' })
 export class Repair {
+  @Prop({ type: Number, index: true })
+  ticketNumber: number;
+
   @Prop({ type: Types.ObjectId, ref: 'Customer', required: true, index: true })
   customerId: Types.ObjectId;
 

@@ -16,54 +16,87 @@ export class AnalyticsService {
   private getRepairModel(db: string) { return this.tenantConnectionService.getModel<Repair>(db, Repair.name, RepairSchema); }
   private getWarrantyModel(db: string) { return this.tenantConnectionService.getModel<Warranty>(db, Warranty.name, WarrantySchema); }
 
-  async getDashboardStats(db: string) {
+  private periodStart(period: string): Date | null {
+    const now = new Date();
+    switch (period) {
+      case 'day':
+        return new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      case 'week':
+        return new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      case 'year':
+        return new Date(now.getFullYear(), 0, 1);
+      case 'all':
+        return null;
+      case 'month':
+      default:
+        return new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+  }
+
+  async getDashboardStats(db: string, period = 'month') {
     const saleModel = this.getSaleModel(db);
     const prodModel = this.getProductModel(db);
-    const custModel = this.getCustomerModel(db);
-    const repModel = this.getRepairModel(db);
-    const warModel = this.getWarrantyModel(db);
+    const from = this.periodStart(period);
+    const match = from ? { saleDate: { $gte: from } } : {};
 
-    const sales = await saleModel.find().exec();
-    const products = await prodModel.find().exec();
-    const customersCount = await custModel.countDocuments();
-    const pendingRepairs = await repModel.countDocuments({ status: { $nin: ['completed', 'returned', 'cancelled'] } });
-    const activeWarranties = await warModel.countDocuments({ status: 'active' });
+    const [salesAgg, topProducts, products, customersCount, pendingRepairs, completedRepairs, activeWarranties] =
+      await Promise.all([
+        saleModel.aggregate([
+          { $match: match },
+          { $group: { _id: null, count: { $sum: 1 }, revenue: { $sum: '$total' } } },
+        ]),
+        saleModel.aggregate([
+          { $match: match },
+          { $unwind: '$items' },
+          {
+            $group: {
+              _id: '$items.productId',
+              productName: { $first: '$items.productName' },
+              quantitySold: { $sum: '$items.quantity' },
+              totalRevenue: { $sum: '$items.total' },
+            },
+          },
+          { $sort: { totalRevenue: -1 } },
+        ]),
+        prodModel.find({}, { purchasePrice: 1, stockQuantity: 1, minStockAlert: 1 }).lean().exec(),
+        this.getCustomerModel(db).countDocuments(),
+        this.getRepairModel(db).countDocuments({ status: { $nin: ['completed', 'returned', 'cancelled'] } }),
+        this.getRepairModel(db).countDocuments({ status: 'completed' }),
+        this.getWarrantyModel(db).countDocuments({ status: 'active' }),
+      ]);
 
-    const productCostMap = new Map<string, number>();
-    products.forEach((p) => productCostMap.set(String(p._id), p.purchasePrice || 0));
-
-    let totalRevenue = 0;
-    let totalPurchaseCost = 0;
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    let todayRevenue = 0;
-    let todaySalesCount = 0;
-
-    sales.forEach((s) => {
-      totalRevenue += s.total;
-      s.items.forEach((item) => {
-        const cost = productCostMap.get(String(item.productId)) || 0;
-        totalPurchaseCost += cost * item.quantity;
-      });
-      if (new Date(s.saleDate) >= todayStart) {
-        todayRevenue += s.total;
-        todaySalesCount++;
-      }
-    });
-
-    const lowStockCount = products.filter((p) => p.stockQuantity <= p.minStockAlert).length;
+    // Marge = CA - coût d'achat (prix d'achat actuel du produit)
+    const costMap = new Map<string, number>();
+    products.forEach((p: any) => costMap.set(String(p._id), p.purchasePrice || 0));
+    const purchaseCost = topProducts.reduce(
+      (sum, p) => sum + (costMap.get(String(p._id)) || 0) * p.quantitySold,
+      0,
+    );
+    const revenue = salesAgg[0]?.revenue || 0;
 
     return {
-      totalRevenue,
-      totalSales: sales.length,
-      totalProducts: products.length,
-      lowStockCount,
-      pendingRepairs,
-      activeWarranties,
-      totalProfit: totalRevenue - totalPurchaseCost,
-      todayRevenue,
-      todaySalesCount,
-      customersCount,
+      period,
+      from,
+      sales: {
+        count: salesAgg[0]?.count || 0,
+        revenue,
+        profit: revenue - purchaseCost,
+      },
+      inventory: {
+        totalProducts: products.length,
+        totalUnits: products.reduce((sum, p: any) => sum + (p.stockQuantity || 0), 0),
+        totalStockValue: products.reduce((sum, p: any) => sum + (p.purchasePrice || 0) * (p.stockQuantity || 0), 0),
+        lowStockCount: products.filter((p: any) => p.stockQuantity <= p.minStockAlert).length,
+      },
+      repairs: { pending: pendingRepairs, completed: completedRepairs },
+      warranties: { active: activeWarranties },
+      customers: { count: customersCount },
+      topProducts: topProducts.slice(0, 5).map((p) => ({
+        productId: p._id,
+        productName: p.productName,
+        quantitySold: p.quantitySold,
+        totalRevenue: p.totalRevenue,
+      })),
     };
   }
 

@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsNumber, IsOptional, IsArray } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsOptional, IsArray, IsBoolean } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateCategoryDto {
@@ -40,6 +40,16 @@ export class CreateProductDto {
   @IsString()
   @IsNotEmpty()
   sku: string;
+
+  @ApiPropertyOptional({ example: '0194253401230', description: 'Code-barres EAN/UPC du modèle' })
+  @IsString()
+  @IsOptional()
+  barcode?: string;
+
+  @ApiPropertyOptional({ default: false, description: 'Chaque unité a un N° de série / IMEI' })
+  @IsBoolean()
+  @IsOptional()
+  hasSerialNumbers?: boolean;
 
   @ApiProperty({ example: 'smartphone' })
   @IsString()

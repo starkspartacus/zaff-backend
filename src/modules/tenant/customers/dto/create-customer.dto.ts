@@ -32,6 +32,11 @@ export class CreateCustomerDto {
   @IsOptional()
   address?: string;
 
+  @ApiPropertyOptional({ example: 'Tech Revente SARL' })
+  @IsString()
+  @IsOptional()
+  companyName?: string;
+
   @ApiPropertyOptional()
   @IsString()
   @IsOptional()

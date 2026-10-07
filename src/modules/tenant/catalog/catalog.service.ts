@@ -48,6 +48,7 @@ export class CatalogService {
       query.$or = [
         { name: { $regex: filter.search, $options: 'i' } },
         { sku: { $regex: filter.search, $options: 'i' } },
+        { barcode: filter.search },
         { brand: { $regex: filter.search, $options: 'i' } },
       ];
     }
