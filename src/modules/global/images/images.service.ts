@@ -351,7 +351,7 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
 
   /** Photos signalées par les boutiques (à traiter par l'administrateur) */
   async reported() {
-    const docs = await this.model.find({ $or: [{ hidden: true }, { reports: { $ne: [] } }] }).sort({ createdAt: -1 }).limit(200).lean().exec();
+    const docs = await this.model.find({ $or: [{ hidden: true }, { 'reports.0': { $exists: true } }] }).sort({ createdAt: -1 }).limit(200).lean().exec();
     return docs.map((d) => this.view(d));
   }
 

@@ -18,7 +18,9 @@ Priorité absolue : une expérience simple et compréhensible (UI et messages d'
 - `catalog_images` : **base d'images produits partagée par toutes les boutiques** (marque, modèle, couleur, clés
   normalisées, fichier ≤ 600 Ko, empreinte sha256 anti-doublon, boutique qui l'a ajoutée, compteur d'utilisation).
 - `reference_categories` : catalogue de référence (catégories + marques usuelles), seedé au démarrage, en cache 10 min.
-- `super_admins` : administrateurs de la plateforme (pas encore de connexion dédiée).
+- `global_devices` : **catalogue global des appareils** (catégorie, marque, modèle, capacités, coloris, photos par coloris,
+  photo par défaut), tenu par l'administrateur de la plateforme, seedé au 1er démarrage depuis `device-catalog.ts`.
+- `super_admins` : réservé (l'administrateur de la plateforme se connecte avec les identifiants de l'environnement).
 
 **Une base par boutique** `zaff_tenant_<slug>` (via `TenantConnectionService.getModel(db, name, schema)`) :
 users, products, product_units, sales, sale_returns, stock_movements, customers, suppliers, purchase_orders,
@@ -101,11 +103,23 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   returned`, appareil `with_customer | in_repair | returned`, jours restants, appareil (N° de série masqué), boutique.
   Jamais le client ni le prix. Changer `JWT_SECRET` invalide les QR déjà imprimés.
 
-## Fiche produit rapide (`GET /global/reference/devices`)
-- `src/common/catalog/device-catalog.ts` : par catégorie de référence, profil (libellé de variante, capacités /
-  configurations, couleurs, accessoires habituels, garantie usuelle) et modèles connus par marque (iPhone, Galaxy,
-  Tecno, Infinix, Itel, Redmi, HP, Dell, Lenovo, MacBook…, avec capacités et coloris officiels quand connus).
-  Simples suggestions : le frontend les complète avec les produits de la boutique, et toute valeur peut être tapée.
+## Administrateur de la plateforme (`/platform/*`)
+- Identifiants **uniquement dans l'environnement** : `PLATFORM_ADMIN_EMAIL`, `PLATFORM_ADMIN_PASSWORD` (≥ 12 caractères en
+  production, ou empreinte bcrypt `$2…`). Sans eux, la connexion admin est désactivée.
+- `POST /platform/auth/login { email, password }` (`PlatformAuthService`) : comparaison en temps constant, 5 échecs → IP
+  bloquée 15 min ; jeton `platform: true`, rôle `superadmin`, valable 12 h. `GET /platform/auth/me`.
+- `PlatformAdminGuard` : jeton plateforme ET e-mail = celui de l'environnement. `TenantGuard` **refuse** un jeton plateforme :
+  l'administrateur ne lit jamais les données d'une boutique ; un jeton de boutique n'accède jamais à `/platform/*`.
+
+## Catalogue global des appareils (`devices/`)
+- `GET /global/reference/devices` (connecté, cache 5 min) : profils par catégorie (`device-catalog.ts` : libellé de variante,
+  capacités, couleurs, accessoires, garantie usuelle) + `models[catégorie][marque] = [{ id, name, variants, colors, photos,
+  imageId }]` lus dans `global_devices` (appareils actifs). Le formulaire produit en fait des suggestions ; toute valeur peut
+  encore être tapée (appareil inconnu = produit sans photo).
+- Administration `/platform/devices` (PlatformAdminGuard) : liste (recherche, catégorie, avec / sans photo), `stats`, CRUD,
+  `POST /:id/photos` (multipart `file` + `thumb` + `color?`), `PATCH /:id/photos/:imageId/default`, `DELETE /:id/photos/:imageId`,
+  `reports` (photos signalées / masquées) avec `keep` et suppression, `usage` (stockage).
+- Un produit de boutique garde `deviceId` (appareil global) et `imageId` (photo choisie parmi celles de l'appareil).
 
 ## Images produits partagées (`/global/images`) — UploadThing, sans fichier orphelin
 - **Stockage** (`media-storage.ts`, jeton `MEDIA_STORAGE`) : **UploadThing** si `UPLOADTHING_TOKEN` est défini (envoi
@@ -115,20 +129,20 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   d'abord puis les plus utilisées ; jamais les photos encore « en attente ». Clé du modèle **sans la marque en tête**
   (`modelKeyOf` : « Samsung Galaxy A55 » = « Galaxy A55 »). `GET /global/images/:id/file` : **public** (balise `<img>`) —
   redirection vers le CDN UploadThing, ou fichier servi depuis MongoDB (cache 1 an).
-- `POST /global/images` (multipart `file` + brand, model, color?, category?, library? ; propriétaire / magasinier) : vrai
+- **Seul l'administrateur de la plateforme envoie des photos** (`POST /global/images` et `/platform/devices/:id/photos`,
+  PlatformAdminGuard) : les boutiques ne photographient plus leurs produits, elles choisissent une photo du catalogue. Vrai
   type vérifié par les premiers octets (JPEG / PNG / WebP, pas de SVG), 600 Ko max, une même photo stockée une fois.
   Si la fiche ne peut pas être créée après l'envoi, le fichier UploadThing est supprimé.
 - **Cycle de vie (aucune photo orpheline)** :
-  - le navigateur n'envoie la photo qu'au clic sur « Enregistrer » ; elle est créée `pending: true` ;
+  - photos d'appareil envoyées par l'admin avec `library: true` + `deviceId` (gardées même sans produit) ; retirer une photo
+    d'un appareil l'efface, ou la masque seulement si des produits l'utilisent encore (`adminRemove`) ;
   - enregistrer le produit la rattache (`attach` : `usage + 1`, `pending: false`) ; photo inexistante → 400 ;
   - produit modifié avec une autre photo, photo retirée, produit supprimé → `release` de l'ancienne : si plus aucun produit
     ne l'utilise et qu'elle n'est pas en photothèque, **effacée chez UploadThing et dans la base** ;
-  - enregistrement du produit en échec → `DELETE /global/images/:id/pending` (même boutique, encore en attente) ;
   - **filet de sécurité toutes les heures** (`cleanup`) : photos en attente depuis plus d'1 h supprimées, et fichiers
     `zaff-…` présents chez UploadThing sans fiche supprimés (les autres fichiers du compte ne sont jamais touchés).
-- **Photothèque** (`library: true`, propriétaire, `library=true` à l'envoi) : import en masse, photos gardées même sans
-  produit. `GET /global/images/mine` : photos de ma boutique. `DELETE /global/images/:id` : seulement la boutique qui l'a
-  ajoutée, et refusé tant qu'un produit l'utilise.
+- **Signalement** `POST /global/images/:id/report` (boutique) : 3 boutiques différentes → photo masquée, à revoir par
+  l'administrateur (garder ou retirer).
 - `Product.imageId` : photo choisie (rattachée / libérée par `CatalogService`).
 
 ## Clôture de caisse (`/cash-closings`)

@@ -9,7 +9,7 @@ const eq = (a: any, b: any) => String(a) === String(b);
 const matches = (doc: any, query: any = {}): boolean =>
   Object.entries(query).every(([key, cond]) => {
     if (key === '$or') return (cond as any[]).some((q) => matches(doc, q));
-    const value = doc[key];
+    const value = key.includes('.') ? key.split('.').reduce((v: any, k) => (v == null ? undefined : v[k]), doc) : doc[key];
     if (cond && typeof cond === 'object' && !(cond instanceof Types.ObjectId) && !(cond instanceof Date)) {
       return Object.entries(cond).every(([op, arg]: [string, any]) => {
         if (op === '$gte') return value >= arg;
