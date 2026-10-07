@@ -17,6 +17,9 @@ const matches = (doc: any, query: any = {}): boolean =>
         if (op === '$in') return arg.some((x: any) => eq(x, value));
         if (op === '$ne') return !eq(value, arg);
         if (op === '$nin') return !arg.some((x: any) => eq(x, value));
+        if (op === '$regex') return new RegExp(arg, (cond as { $options?: string }).$options || '').test(String(value ?? ''));
+        if (op === '$options') return true;
+        if (op === '$exists') return (value !== undefined) === !!arg;
         throw new Error(`Opérateur non supporté par FakeModel : ${op}`);
       });
     }
@@ -27,7 +30,16 @@ const matches = (doc: any, query: any = {}): boolean =>
 const applyUpdate = (doc: any, update: any) => {
   for (const [key, val] of Object.entries(update)) {
     if (key === '$inc') Object.entries(val as any).forEach(([k, n]) => (doc[k] = (doc[k] || 0) + (n as number)));
-    else if (key === '$set') Object.assign(doc, val);
+    else if (key === '$set') {
+      // Chemins pointés : { 'settings.returnPolicy': … }
+      for (const [path, v] of Object.entries(val as any)) {
+        const parts = path.split('.');
+        let target = doc;
+        for (const k of parts.slice(0, -1)) target = target[k] ??= {};
+        target[parts.at(-1)!] = v;
+      }
+    }
+    else if (key === '$push') Object.entries(val as any).forEach(([k, v]) => (doc[k] = [...(doc[k] || []), v]));
     else if (key === '$addToSet') Object.entries(val as any).forEach(([k, v]) => (doc[k] = [...new Set([...(doc[k] || []), v])]));
     else doc[key] = val;
   }
@@ -98,6 +110,9 @@ export class FakeModel {
     return inner;
   }
   findById(id: any) { return this.findOneQuery({ _id: id }); }
+  async estimatedDocumentCount() { return this.docs.length; }
+  async insertMany(list: any[]) { return Promise.all(list.map((d) => this.create(d))); }
+  findByIdAndDelete(id: any) { return this.findOneAndDelete({ _id: id }); }
   async exists(q: any) { return this.docs.some((d) => matches(d, q)) ? { _id: 1 } : null; }
   async countDocuments(q: any = {}) { return this.docs.filter((d) => matches(d, q)).length; }
 

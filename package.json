@@ -21,7 +21,8 @@
     "test:boot": "MONGODB_URI=mongodb://localhost:27017 JWT_SECRET=boot-test-secret ts-node test/boot.smoke.ts",
     "vapid:generate": "web-push generate-vapid-keys",
     "prestart:dev": "node scripts/check-deps.js",
-    "prestart": "node scripts/check-deps.js"
+    "prestart": "node scripts/check-deps.js",
+    "dev:memory": "ts-node test/memory-server.ts"
   },
   "dependencies": {
     "@nestjs/common": "^10.0.0",

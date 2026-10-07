@@ -107,4 +107,8 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 - `npx jest` : stock à l'unité / vente par scan / notifications (modèles en mémoire, `src/testing/fake-model.ts`)
   et WebSocket réel (auth, cloisonnement par boutique, présence).
 - `npm run test:boot` : démarre toute l'app sans MongoDB (connexion simulée) : injection, routes, WebSocket.
+- `npm run dev:memory` : le **vrai** backend (contrôleurs, gardes, validation, services, WebSocket) sur une base en
+  mémoire (`test/memory-server.ts`, données de démo, comptes +2250700000001/2/3 mot de passe « secret »). Sert aux
+  démonstrations et aux tests navigateur sans MongoDB. Si un service utilise un opérateur Mongo non géré par
+  `src/testing/fake-model.ts`, l'ajouter au fake (il échoue explicitement plutôt que de répondre faux).
 - Le lint (prettier) signale de nombreux écarts de formatage antérieurs : ne pas reformater tout le dépôt dans un changement fonctionnel.
