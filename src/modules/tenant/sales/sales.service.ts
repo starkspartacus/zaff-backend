@@ -13,6 +13,7 @@ import { UnitStatus } from '../../../common/enums/unit-status.enum';
 import { CreateSaleDto, ReturnSaleDto } from './dto/create-sale.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { paymentLabel } from '../../../common/enums/payment-labels';
+import { CreditNote, CreditNoteSchema } from '../returns/schemas/credit-note.schema';
 
 export interface Actor {
   userId: string;
@@ -45,6 +46,35 @@ export class SalesService {
   private getCustomerModel(db: string) { return this.tenantConnectionService.getModel<Customer>(db, Customer.name, CustomerSchema); }
   private getStockMovementModel(db: string) { return this.tenantConnectionService.getModel<StockMovement>(db, StockMovement.name, StockMovementSchema); }
   private getWarrantyModel(db: string) { return this.tenantConnectionService.getModel<Warranty>(db, Warranty.name, WarrantySchema); }
+  private getCreditNoteModel(db: string) { return this.tenantConnectionService.getModel<CreditNote>(db, CreditNote.name, CreditNoteSchema); }
+
+  /**
+   * Utilise un avoir sur une vente : débit atomique du solde (jamais en dessous de zéro).
+   * Renvoie le montant déduit et la fonction d'annulation.
+   */
+  private async redeemCreditNote(db: string, rawCode: string, total: number) {
+    const model = this.getCreditNoteModel(db);
+    const code = rawCode.trim().toUpperCase();
+    const note = await model.findOne({ code });
+    if (!note) throw new BadRequestException(`Avoir ${code} introuvable.`);
+    if (note.status !== 'active' || note.balance <= 0) throw new BadRequestException(`L'avoir ${code} a déjà été utilisé.`);
+    if (note.expiresAt < new Date()) throw new BadRequestException(`L'avoir ${code} a expiré le ${note.expiresAt.toLocaleDateString('fr-FR')}.`);
+
+    const amount = Math.min(note.balance, total);
+    const updated = await model.findOneAndUpdate(
+      { _id: note._id, status: 'active', balance: { $gte: amount } },
+      { $inc: { balance: -amount } },
+      { new: true },
+    );
+    if (!updated) throw new BadRequestException(`L'avoir ${code} vient d'être utilisé, réessayez.`);
+    if (updated.balance <= 0) await model.updateOne({ _id: note._id }, { $set: { status: 'used' } });
+    return {
+      code,
+      amount,
+      noteId: note._id,
+      undo: () => model.updateOne({ _id: note._id }, { $inc: { balance: amount }, $set: { status: 'active' } }),
+    };
+  }
 
   async findAll(db: string, filter: { sellerId?: string } = {}) {
     const query: any = {};
@@ -95,6 +125,7 @@ export class SalesService {
     // 2. Réservation atomique des unités et du stock (annulée en cas d'échec)
     const rollback: Array<() => Promise<unknown>> = [];
     const lowStock: any[] = [];
+    let credit: { code: string; amount: number; noteId: unknown } | null = null;
     const undo = async () => {
       for (const fn of rollback.reverse()) await fn().catch(() => undefined);
     };
@@ -129,6 +160,12 @@ export class SalesService {
         rollback.push(() => prodModel.updateOne({ _id: product._id }, { $inc: { stockQuantity: item.quantity } }));
         if (updated.stockQuantity <= (updated.minStockAlert ?? 0)) lowStock.push(updated);
       }
+      // Avoir (échange / bon d'achat) : déduit du montant à encaisser
+      if (dto.creditNoteCode) {
+        const redeemed = await this.redeemCreditNote(db, dto.creditNoteCode, dto.total);
+        rollback.push(redeemed.undo);
+        credit = redeemed;
+      }
     } catch (e) {
       await undo();
       throw e;
@@ -162,7 +199,9 @@ export class SalesService {
       subtotal: dto.subtotal,
       discount: dto.discount || 0,
       total: dto.total,
-      paidAmount: dto.paidAmount ?? dto.total,
+      paidAmount: dto.paidAmount ?? dto.total - (credit?.amount || 0),
+      creditNoteCode: credit?.code || null,
+      creditNoteAmount: credit?.amount || 0,
       paymentMethod: dto.paymentMethod,
       saleType: dto.saleType,
       items: dto.items.map((i) => ({
@@ -175,6 +214,13 @@ export class SalesService {
       sellerId: seller ? new Types.ObjectId(seller.userId) : null,
       sellerName: seller?.name || null,
     });
+
+    if (credit) {
+      await this.getCreditNoteModel(db).updateOne(
+        { _id: credit.noteId },
+        { $push: { uses: { saleId: sale._id, invoiceNumber: nextInvoiceNumber, amount: credit.amount, at: new Date() } } },
+      );
+    }
 
     // 6. Traçabilité : unités liées à la facture, mouvements de stock, stats client
     if (serials.size) {

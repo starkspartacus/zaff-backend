@@ -10,7 +10,8 @@ export type DataScope =
   | 'repairs'
   | 'suppliers'
   | 'users'
-  | 'cash-closings';
+  | 'cash-closings'
+  | 'returns';
 
 export interface SocketUser {
   userId: string;

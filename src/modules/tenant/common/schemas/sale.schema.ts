@@ -86,6 +86,13 @@ export class Sale {
   @Prop({ default: null })
   sellerName: string;
 
+  /** Avoir utilisé pour payer une partie de la vente */
+  @Prop({ default: null })
+  creditNoteCode: string;
+
+  @Prop({ default: 0 })
+  creditNoteAmount: number;
+
   /** Clôture de caisse qui inclut cette vente (null = pas encore clôturée) */
   @Prop({ type: Types.ObjectId, default: null, index: true })
   closingId: Types.ObjectId;

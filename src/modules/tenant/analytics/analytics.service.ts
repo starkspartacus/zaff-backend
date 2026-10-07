@@ -7,6 +7,7 @@ import { Customer, CustomerSchema } from '../common/schemas/customer.schema';
 import { Repair, RepairSchema } from '../common/schemas/repair.schema';
 import { Warranty, WarrantySchema } from '../common/schemas/warranty.schema';
 import { ProductUnit, ProductUnitSchema } from '../common/schemas/product-unit.schema';
+import { ProductReturn, ProductReturnSchema } from '../returns/schemas/product-return.schema';
 
 @Injectable()
 export class AnalyticsService {
@@ -17,6 +18,7 @@ export class AnalyticsService {
   private getCustomerModel(db: string) { return this.tenantConnectionService.getModel<Customer>(db, Customer.name, CustomerSchema); }
   private getRepairModel(db: string) { return this.tenantConnectionService.getModel<Repair>(db, Repair.name, RepairSchema); }
   private getWarrantyModel(db: string) { return this.tenantConnectionService.getModel<Warranty>(db, Warranty.name, WarrantySchema); }
+  private getReturnModel(db: string) { return this.tenantConnectionService.getModel<ProductReturn>(db, ProductReturn.name, ProductReturnSchema); }
   private getUnitModel(db: string) { return this.tenantConnectionService.getModel<ProductUnit>(db, ProductUnit.name, ProductUnitSchema); }
 
   private periodStart(period: string): Date | null {
@@ -42,7 +44,7 @@ export class AnalyticsService {
     const from = this.periodStart(period);
     const match = from ? { saleDate: { $gte: from } } : {};
 
-    const [salesAgg, topProducts, products, customersCount, pendingRepairs, completedRepairs, activeWarranties, bySeller] =
+    const [salesAgg, topProducts, products, customersCount, pendingRepairs, completedRepairs, activeWarranties, bySeller, returnsAgg] =
       await Promise.all([
         saleModel.aggregate([
           { $match: match },
@@ -79,6 +81,11 @@ export class AnalyticsService {
           },
           { $sort: { revenue: -1 } },
         ]),
+        // Retours de la période : avoirs, échanges et remboursements viennent en déduction du CA
+        this.getReturnModel(db).aggregate([
+          { $match: from ? { createdAt: { $gte: from } } : {} },
+          { $group: { _id: null, count: { $sum: 1 }, amount: { $sum: '$amount' } } },
+        ]),
       ]);
 
     // Marge = CA - coût d'achat (prix d'achat actuel du produit)
@@ -89,6 +96,7 @@ export class AnalyticsService {
       0,
     );
     const revenue = salesAgg[0]?.revenue || 0;
+    const returnsAmount = returnsAgg[0]?.amount || 0;
 
     return {
       period,
@@ -96,7 +104,9 @@ export class AnalyticsService {
       sales: {
         count: salesAgg[0]?.count || 0,
         revenue,
-        profit: revenue - purchaseCost,
+        profit: revenue - purchaseCost - returnsAmount,
+        returns: { count: returnsAgg[0]?.count || 0, amount: returnsAmount },
+        netRevenue: revenue - returnsAmount,
       },
       inventory: {
         totalProducts: products.length,

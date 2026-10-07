@@ -6,6 +6,7 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { Actor } from '../sales/sales.service';
 import { CashClosing, CashClosingSchema, PaymentTotals } from './cash-closing.schema';
 import { CloseRegisterDto, ValidateClosingDto } from './dto/cash-closing.dto';
+import { ProductReturn, ProductReturnSchema } from '../returns/schemas/product-return.schema';
 
 const emptyTotals = (): PaymentTotals => ({ cash: 0, mobile: 0, card: 0, bank_transfer: 0, credit: 0 });
 
@@ -19,6 +20,7 @@ export class CashClosingsService {
   ) {}
 
   private getSaleModel(db: string) { return this.tenantConnectionService.getModel<Sale>(db, Sale.name, SaleSchema); }
+  private getReturnModel(db: string) { return this.tenantConnectionService.getModel<ProductReturn>(db, ProductReturn.name, ProductReturnSchema); }
   private getClosingModel(db: string) { return this.tenantConnectionService.getModel<CashClosing>(db, CashClosing.name, CashClosingSchema); }
 
   /** Totaux par mode de paiement d'un ensemble de ventes */
@@ -28,7 +30,8 @@ export class CashClosingsService {
       {
         $group: {
           _id: '$paymentMethod',
-          amount: { $sum: '$total' },
+          // La part payée avec un avoir n'est pas de l'argent encaissé
+          amount: { $sum: { $subtract: ['$total', { $ifNull: ['$creditNoteAmount', 0] }] } },
           count: { $sum: 1 },
           items: { $sum: { $size: '$items' } },
           first: { $min: '$saleDate' },
@@ -53,11 +56,33 @@ export class CashClosingsService {
     return { totals, totalAmount, salesCount, itemsCount, first, last };
   }
 
+  /** Remboursements de retours (espèces / Mobile Money) sortis de la caisse */
+  private async summarizeRefunds(db: string, match: Record<string, unknown>) {
+    const rows = await this.getReturnModel(db).aggregate([
+      { $match: { ...match, action: 'refund' } },
+      { $group: { _id: '$refundMethod', amount: { $sum: '$amount' }, count: { $sum: 1 } } },
+    ]);
+    const refunds = { cash: 0, mobile: 0, count: 0 };
+    for (const r of rows) {
+      if (r._id === 'mobile') refunds.mobile += r.amount;
+      else refunds.cash += r.amount;
+      refunds.count += r.count;
+    }
+    return refunds;
+  }
+
+  /** Ventes − remboursements : ce que le collaborateur doit réellement remettre */
+  private async register(db: string, salesMatch: Record<string, unknown>, refundsMatch: Record<string, unknown>) {
+    const [s, refunds] = await Promise.all([this.summarize(db, salesMatch), this.summarizeRefunds(db, refundsMatch)]);
+    const totals = { ...s.totals, cash: s.totals.cash - refunds.cash, mobile: s.totals.mobile - refunds.mobile };
+    return { ...s, totals, refunds, totalAmount: s.totalAmount - refunds.cash - refunds.mobile };
+  }
+
   /** Caisse en cours du collaborateur : ventes pas encore clôturées */
   async current(db: string, sellerId: string) {
     const match = { sellerId: new Types.ObjectId(sellerId), closingId: null };
     const [summary, sales, lastClosing] = await Promise.all([
-      this.summarize(db, match),
+      this.register(db, match, { processedBy: new Types.ObjectId(sellerId), closingId: null }),
       this.getSaleModel(db)
         .find(match, { invoiceNumber: 1, total: 1, paymentMethod: 1, saleDate: 1, 'items.productName': 1, 'items.serialNumber': 1 })
         .sort({ saleDate: -1 })
@@ -91,12 +116,16 @@ export class CashClosingsService {
       { sellerId, closingId: null, saleDate: { $lte: closedAt } },
       { $set: { closingId } },
     );
-    if (!claimed.modifiedCount) {
+    const claimedRefunds = await this.getReturnModel(db).updateMany(
+      { processedBy: sellerId, closingId: null, action: 'refund', createdAt: { $lte: closedAt } },
+      { $set: { closingId } },
+    );
+    if (!claimed.modifiedCount && !claimedRefunds.modifiedCount) {
       throw new BadRequestException('Aucune vente à clôturer depuis votre dernière clôture.');
     }
 
     try {
-      const s = await this.summarize(db, { closingId });
+      const s = await this.register(db, { closingId }, { closingId });
       const declaredCash = Math.round(dto.declaredCash);
       const closing = await closingModel.create({
         _id: closingId,
@@ -108,6 +137,7 @@ export class CashClosingsService {
         itemsCount: s.itemsCount,
         totals: s.totals,
         totalAmount: s.totalAmount,
+        refunds: s.refunds,
         expectedCash: s.totals.cash,
         declaredCash,
         cashDifference: declaredCash - s.totals.cash,
@@ -120,6 +150,7 @@ export class CashClosingsService {
     } catch (e) {
       // Échec après la réservation : les ventes redeviennent « à clôturer »
       await saleModel.updateMany({ closingId }, { $set: { closingId: null } }).catch(() => undefined);
+      await this.getReturnModel(db).updateMany({ closingId }, { $set: { closingId: null } }).catch(() => undefined);
       throw e;
     }
   }
@@ -130,7 +161,7 @@ export class CashClosingsService {
     await this.notifications.notify(db, {
       type: 'cash.closed',
       title: diff === 0 ? 'Clôture de caisse' : 'Clôture de caisse avec écart',
-      message: `${actor.name} a clôturé sa caisse : ${c.salesCount} vente${c.salesCount > 1 ? 's' : ''}, ${fmt(c.expectedCash)} en espèces et ${fmt(c.totals.mobile)} en Mobile Money à remettre (${diffText}).`,
+      message: `${actor.name} a clôturé sa caisse : ${c.salesCount} vente${c.salesCount > 1 ? 's' : ''}${c.refunds?.count ? `, ${c.refunds.count} remboursement${c.refunds.count > 1 ? 's' : ''}` : ''}, ${fmt(c.expectedCash)} en espèces et ${fmt(c.totals.mobile)} en Mobile Money à remettre (${diffText}).`,
       level: diff === 0 ? 'info' : 'warning',
       roles: ['admin'],
       actorId: actor.userId,
@@ -163,7 +194,7 @@ export class CashClosingsService {
         $group: {
           _id: { seller: '$sellerId', method: '$paymentMethod' },
           sellerName: { $first: '$sellerName' },
-          amount: { $sum: '$total' },
+          amount: { $sum: { $subtract: ['$total', { $ifNull: ['$creditNoteAmount', 0] }] } },
           count: { $sum: 1 },
           first: { $min: '$saleDate' },
           last: { $max: '$saleDate' },
@@ -180,6 +211,18 @@ export class CashClosingsService {
       e.salesCount += r.count;
       if (r.first < e.since) e.since = r.first;
       if (r.last > e.lastSaleAt) e.lastSaleAt = r.last;
+      bySeller.set(id, e);
+    }
+    const refunds = await this.getReturnModel(db).aggregate([
+      { $match: { closingId: null, action: 'refund' } },
+      { $group: { _id: { seller: '$processedBy', method: '$refundMethod' }, sellerName: { $first: '$processedByName' }, amount: { $sum: '$amount' }, first: { $min: '$createdAt' } } },
+    ]);
+    for (const r of refunds) {
+      const id = String(r._id.seller);
+      const e = bySeller.get(id) || { sellerId: id, sellerName: r.sellerName, totals: emptyTotals(), totalAmount: 0, salesCount: 0, since: r.first, lastSaleAt: r.first };
+      const key = r._id.method === 'mobile' ? 'mobile' : 'cash';
+      e.totals[key] -= r.amount;
+      e.totalAmount -= r.amount;
       bySeller.set(id, e);
     }
     return [...bySeller.values()].sort((a, b) => b.totalAmount - a.totalAmount);

@@ -13,6 +13,8 @@ const PUSH_URL: Record<string, string> = {
   'stock.low': '/app/stock',
   'cash.closed': '/app/cash-closings',
   'cash.validated': '/app/cash-closing',
+  'return.created': '/app/returns',
+  'repair.ready': '/app/repairs',
 };
 
 export interface NotifyInput {

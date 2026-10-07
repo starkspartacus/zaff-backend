@@ -19,7 +19,8 @@ Priorité absolue : une expérience simple et compréhensible (UI et messages d'
 
 **Une base par boutique** `zaff_tenant_<slug>` (via `TenantConnectionService.getModel(db, name, schema)`) :
 users, products, product_units, sales, sale_returns, stock_movements, customers, suppliers, purchase_orders,
-repairs, warranties, categories, brands, notifications, push_subscriptions, cash_closings.
+repairs, warranties, categories, brands, notifications, push_subscriptions, cash_closings, product_returns, credit_notes.
+Paramètres de la boutique (dont `settings.returnPolicy`) : dans `establishments` (base globale), chargés à chaque requête par `TenantGuard`.
 Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenant('databaseName')` aux services.
 
 ## Rôles (`common/enums/role.enum.ts`)
@@ -31,13 +32,32 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 
 ## Stock à l'unité (N° de série)
 - `Product` = modèle (catégorie, marque, nom, modèle, couleur, code-barres EAN de la boîte, prix).
-- `ProductUnit` = appareil physique, `serialNumber` **unique** dans la boutique, statut `in_stock | sold | defective`.
+- `ProductUnit` = appareil physique, `serialNumber` **unique** dans la boutique, statut `in_stock | sold | defective | in_repair`.
 - Pour un produit `hasSerialNumbers`, `stockQuantity` = nombre d'unités `in_stock` : il ne bouge QUE par
   `/units` (mise en stock), la vente, un retour, ou le passage défectueux ↔ en stock. Mouvements manuels et
   réceptions fournisseurs refusés / ignorés pour ces produits.
 - Vente : réservation **atomique** (`findOneAndUpdate` sur `status: in_stock`) + décrément conditionnel du stock,
   avec rollback de tout ce qui a été fait si une ligne échoue. Ne jamais remplacer par un « lire puis écrire ».
 - Un code scanné est résolu par `GET /units/lookup/:code` : N° de série d'une unité, sinon code-barres d'un modèle.
+
+## Retours, avoirs et garantie (`/returns`, `/credit-notes`, `/settings/return-policy`)
+- **Politique configurée par le propriétaire** (`settings/return-policy.ts`, valeurs par défaut + `resolveReturnPolicy`) :
+  délai de retour, conditions à cocher, solutions autorisées (avoir / remboursement / échange), frais de remise en stock,
+  modes de remboursement, validité des avoirs ; pour les pannes : délai d'échange, garantie par défaut, réparation
+  sous garantie, réparation payante hors garantie. Le vendeur applique seulement ce qui est proposé.
+- **Règles** : fonction pure `evaluateReturn` (`returns/return-rules.ts`), utilisée par `GET /returns/lookup/:serial`
+  (affichage) et **réappliquée** par `POST /returns` (le client ne peut pas forcer une option).
+- Effet sur l'appareil (réservation atomique `status: sold`) :
+  - changement d'avis → `in_stock`, stock +1 (revendable) ;
+  - panne dans le délai d'échange (échange / avoir / remboursement) → `defective` (propriété boutique, hors stock)
+    + ticket SAV `ownership: shop` ; réparé → notification `repair.ready`, remise en vente manuelle (Numéros de série) ;
+  - réparation sous garantie / payante → `in_repair` (appareil du client, hors stock) + ticket SAV `ownership: customer` ;
+    ticket passé à `returned` → l'appareil redevient `sold`.
+- **Avoirs** `AV-<n>` (séquence `number`) : utilisables à la vente (`creditNoteCode`), débit atomique du solde, vente
+  entièrement annulée si l'avoir est invalide / expiré / déjà utilisé. Échange = avoir utilisé tout de suite.
+- **Caisse** : la part d'une vente payée par avoir n'est pas comptée comme encaissée ; les remboursements donnés par
+  le collaborateur sont déduits de ses espèces / Mobile Money à remettre (`refunds` dans la clôture).
+- Tableau de bord : retours de la période déduits (`sales.returns`, `sales.netRevenue`).
 
 ## Clôture de caisse (`/cash-closings`)
 - Chaque vente porte `sellerId` et `closingId` (null tant qu'elle n'est pas clôturée).
@@ -58,7 +78,8 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 - Émettre depuis les services via `NotificationsService.notify()` / `.invalidate()` (jamais de socket dans le métier).
 - Contrôleurs CRUD : décorateur `@Invalidates('products', …)` → `InvalidateInterceptor` diffuse après succès.
 - Types d'événements actuels : `sale.created` (→ admin, avec le mode de paiement), `units.added` (→ admin),
-  `stock.low` (→ admin, storekeeper), `cash.closed` (→ admin), `cash.validated` (→ vendeur).
+  `stock.low` (→ admin, storekeeper), `cash.closed` (→ admin), `cash.validated` (→ vendeur),
+  `return.created` (→ admin, + storekeeper si atelier), `repair.ready` (→ admin, storekeeper).
 - Une notification vise des rôles (`roles`) et/ou des personnes (`userIds`, salon `u:<userId>`).
 
 ## Notifications push (Web Push, `PushService`)

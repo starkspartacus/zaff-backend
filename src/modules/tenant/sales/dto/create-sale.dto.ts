@@ -105,6 +105,11 @@ export class CreateSaleDto {
   @IsString()
   @IsOptional()
   notes?: string;
+
+  @ApiPropertyOptional({ example: 'AV-1001', description: 'Avoir utilisé pour payer (tout ou partie)' })
+  @IsString()
+  @IsOptional()
+  creditNoteCode?: string;
 }
 
 export class ReturnSaleDto {

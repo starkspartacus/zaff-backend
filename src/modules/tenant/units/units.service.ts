@@ -183,9 +183,10 @@ export class UnitsService {
         subtotal: unitPrice,
         discount: 0,
         total: unitPrice,
-        paidAmount: dto.paidAmount ?? unitPrice,
+        paidAmount: dto.paidAmount,
         paymentMethod: dto.paymentMethod || PaymentMethod.CASH,
         saleType: SaleType.PURCHASE,
+        creditNoteCode: dto.creditNoteCode,
       },
       actor,
     );
@@ -200,6 +201,9 @@ export class UnitsService {
     const unit = await unitModel.findById(id);
     if (!unit) throw new NotFoundException('Appareil non trouvé.');
     if (unit.status === UnitStatus.SOLD) throw new BadRequestException('Un appareil vendu ne peut pas changer de statut (passez par un retour).');
+    if (unit.status === UnitStatus.IN_REPAIR) {
+      throw new BadRequestException("Cet appareil est à l'atelier pour un client : il sera rendu au client après réparation.");
+    }
     if (unit.status === dto.status) return unit;
 
     const from = unit.status;

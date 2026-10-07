@@ -42,6 +42,10 @@ export class CashClosing {
   @Prop({ default: 0 })
   totalAmount: number;
 
+  /** Remboursements de retours donnés par le collaborateur (déjà déduits de totals) */
+  @Prop({ type: Object, default: { cash: 0, mobile: 0, count: 0 } })
+  refunds: { cash: number; mobile: number; count: number };
+
   /** Espèces attendues (= totals.cash) et comptées par le vendeur */
   @Prop({ default: 0 })
   expectedCash: number;

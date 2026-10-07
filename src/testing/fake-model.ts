@@ -33,19 +33,36 @@ const applyUpdate = (doc: any, update: any) => {
   }
 };
 
-const query = (run: () => any) => {
+const REFS: Record<string, string> = { customerId: 'Customer', productId: 'Product', supplierId: 'Supplier', saleId: 'Sale' };
+
+const query = (run: () => any, registry?: Record<string, FakeModel>, single = false) => {
   let sortSpec: Record<string, number> | null = null;
+  const paths: string[] = [];
   const q: any = {
     sort: (s: Record<string, number>) => ((sortSpec = s), q),
-    populate: () => q,
+    populate: (path: string) => (paths.push(path), q),
     limit: () => q,
     lean: () => q,
     exec: async () => {
-      const res = run();
+      let res = run();
+      if (paths.length && registry && res) {
+        const resolve = (d: any) => {
+          if (!d) return d;
+          const copy = Object.assign(Object.create(Object.getPrototypeOf(d)), d);
+          for (const p of paths) {
+            const target = registry[REFS[p]];
+            const ref = d[p];
+            if (target && ref && !(ref && typeof ref === 'object' && 'name' in ref)) copy[p] = target.docs.find((x) => eq(x._id, ref)) ?? ref;
+          }
+          return copy;
+        };
+        res = Array.isArray(res) ? res.map(resolve) : resolve(res);
+      }
       if (Array.isArray(res) && sortSpec) {
         const [[k, dir]] = Object.entries(sortSpec);
         res.sort((a: any, b: any) => (a[k] > b[k] ? dir : a[k] < b[k] ? -dir : 0));
       }
+      if (single) res = Array.isArray(res) ? (res[0] ?? null) : res;
       return res;
     },
     then: (ok: any, ko: any) => q.exec().then(ok, ko),
@@ -55,6 +72,7 @@ const query = (run: () => any) => {
 
 export class FakeModel {
   docs: any[] = [];
+  registry?: Record<string, FakeModel>;
   constructor(private readonly unique: string[] = []) {}
 
   private wrap(doc: any) {
@@ -73,12 +91,10 @@ export class FakeModel {
     return doc;
   }
 
-  find(q: any = {}) { return query(() => this.docs.filter((d) => matches(d, q))); }
+  find(q: any = {}) { return query(() => this.docs.filter((d) => matches(d, q)), this.registry); }
   findOne(q: any = {}) { return this.findOneQuery(q); }
   private findOneQuery(q: any) {
-    const inner = query(() => this.docs.filter((d) => matches(d, q)));
-    const exec = inner.exec;
-    inner.exec = async () => (await exec())[0] ?? null;
+    const inner = query(() => this.docs.filter((d) => matches(d, q)), this.registry, true);
     return inner;
   }
   findById(id: any) { return this.findOneQuery({ _id: id }); }
@@ -126,6 +142,8 @@ export class FakeModel {
     const val = (doc: any, expr: any): any => {
       if (typeof expr === 'string' && expr.startsWith('$')) return expr.slice(1).split('.').reduce((o, k) => o?.[k], doc);
       if (expr && typeof expr === 'object' && '$size' in expr) return (val(doc, expr.$size) || []).length;
+      if (expr && typeof expr === 'object' && '$subtract' in expr) return val(doc, expr.$subtract[0]) - val(doc, expr.$subtract[1]);
+      if (expr && typeof expr === 'object' && '$ifNull' in expr) return val(doc, expr.$ifNull[0]) ?? val(doc, expr.$ifNull[1]);
       if (expr && typeof expr === 'object' && !(expr instanceof Types.ObjectId)) {
         return Object.fromEntries(Object.entries(expr).map(([k, e]) => [k, val(doc, e)]));
       }
@@ -175,6 +193,12 @@ export const fakeTenantConnection = (unique: Record<string, string[]> = {}) => {
   const models: Record<string, FakeModel> = {};
   return {
     models,
-    getModel: (_db: string, name: string) => (models[name] ??= new FakeModel(unique[name])),
+    getModel: (_db: string, name: string) => {
+      if (!models[name]) {
+        models[name] = new FakeModel(unique[name]);
+        models[name].registry = models;
+      }
+      return models[name];
+    },
   };
 };

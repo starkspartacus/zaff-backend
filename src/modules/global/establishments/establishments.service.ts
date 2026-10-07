@@ -98,6 +98,16 @@ export class EstablishmentsService {
     return est;
   }
 
+  /** Met à jour une section des paramètres de la boutique (ex. returnPolicy) */
+  async updateSettings(id: string, section: string, value: unknown): Promise<Establishment> {
+    if (!/^[a-zA-Z]+$/.test(section)) throw new Error('Section de paramètres invalide');
+    const est = await this.establishmentModel
+      .findByIdAndUpdate(id, { $set: { [`settings.${section}`]: value } }, { new: true })
+      .exec();
+    if (!est) throw new NotFoundException('Établissement non trouvé.');
+    return est;
+  }
+
   async toggleStatus(id: string): Promise<Establishment> {
     const est = await this.findById(id);
     const newStatus = est.status === 'active' ? 'suspended' : 'active';

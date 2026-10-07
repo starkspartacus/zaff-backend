@@ -68,6 +68,11 @@ export class SellUnitDto {
   @IsOptional()
   customerPhone?: string;
 
+  @ApiPropertyOptional({ example: 'AV-1001', description: 'Avoir à déduire (échange)' })
+  @IsString()
+  @IsOptional()
+  creditNoteCode?: string;
+
   @ApiPropertyOptional({ example: 12, description: 'Garantie en mois (0 = aucune). Nécessite un client.' })
   @Type(() => Number)
   @IsNumber()

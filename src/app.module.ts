@@ -19,6 +19,8 @@ import { WarrantiesModule } from './modules/tenant/warranties/warranties.module'
 import { AnalyticsModule } from './modules/tenant/analytics/analytics.module';
 import { UnitsModule } from './modules/tenant/units/units.module';
 import { CashClosingsModule } from './modules/tenant/cash-closings/cash-closings.module';
+import { SettingsModule } from './modules/tenant/settings/settings.module';
+import { ReturnsModule } from './modules/tenant/returns/returns.module';
 
 @Module({
   imports: [
@@ -44,6 +46,8 @@ import { CashClosingsModule } from './modules/tenant/cash-closings/cash-closings
     AnalyticsModule,
     UnitsModule,
     CashClosingsModule,
+    SettingsModule,
+    ReturnsModule,
   ],
 })
 export class AppModule {}
