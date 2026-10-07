@@ -7,11 +7,13 @@ import { TenantGuard } from '../../../common/guards/tenant.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
 import { Role } from '../../../common/enums/role.enum';
+import { Invalidates } from '../../realtime/invalidates.decorator';
 import { CurrentTenant } from '../../../common/decorators/current-tenant.decorator';
 
 @ApiTags('Tenant - Catalog (Products, Categories, Brands)')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, TenantGuard, RolesGuard)
+@Invalidates('products', 'stock', 'dashboard')
 @Controller('catalog')
 export class CatalogController {
   constructor(private readonly catalogService: CatalogService) {}

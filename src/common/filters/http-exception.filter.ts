@@ -43,6 +43,10 @@ export class HttpExceptionFilter implements ExceptionFilter {
       timestamp: new Date().toISOString(),
       path: request.url,
       message,
+      // Données complémentaires utiles au client (ex. liste de boutiques à choisir)
+      ...(typeof exceptionResponse === 'object' && exceptionResponse && (exceptionResponse as any).details
+        ? { details: (exceptionResponse as any).details }
+        : {}),
     });
   }
 }

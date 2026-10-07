@@ -10,6 +10,7 @@ import { PaymentMethod } from '../../../common/enums/payment-method.enum';
 import { SaleType } from '../../../common/enums/sale-type.enum';
 import { Actor, SalesService, normalizeSerial } from '../sales/sales.service';
 import { AddUnitsDto, SellUnitDto, UpdateUnitStatusDto } from './dto/units.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -18,6 +19,7 @@ export class UnitsService {
   constructor(
     private readonly tenantConnectionService: TenantConnectionService,
     private readonly salesService: SalesService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   private getUnitModel(db: string) { return this.tenantConnectionService.getModel<ProductUnit>(db, ProductUnit.name, ProductUnitSchema); }
@@ -133,6 +135,16 @@ export class UnitsService {
         referenceType: StockReferenceType.MANUAL,
         notes: `Mise en stock par ${actor.name} : ${serials.slice(0, 10).join(', ')}${serials.length > 10 ? `… (+${serials.length - 10})` : ''}`,
       });
+      await this.notifications.notify(db, {
+        type: 'units.added',
+        title: 'Mise en stock',
+        message: `${actor.name} a mis en stock ${created.length} × ${product.name}`,
+        level: 'info',
+        roles: ['admin'],
+        actorId: actor.userId,
+        data: { productId: String(product._id), count: created.length, stockQuantity },
+      });
+      this.notifications.invalidate(db, ['units', 'products', 'stock', 'dashboard', 'my-stats']);
     }
 
     return { product, created, rejected, stockQuantity };
@@ -207,6 +219,7 @@ export class UnitsService {
       referenceType: StockReferenceType.ADJUSTMENT,
       notes: `${unit.serialNumber} ${delta > 0 ? 'remis en vente' : 'mis de côté (défectueux)'}${dto.notes ? ` : ${dto.notes}` : ''}`,
     });
+    this.notifications.invalidate(db, ['units', 'products', 'stock', 'dashboard']);
     return updated.populate('productId');
   }
 
@@ -225,6 +238,7 @@ export class UnitsService {
       referenceType: StockReferenceType.ADJUSTMENT,
       notes: `Unité ${unit.serialNumber} supprimée (erreur de saisie)`,
     });
+    this.notifications.invalidate(db, ['units', 'products', 'stock', 'dashboard', 'my-stats']);
     return { message: `Appareil ${unit.serialNumber} supprimé du stock.` };
   }
 }

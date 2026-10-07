@@ -3,6 +3,9 @@ import { ConfigModule } from '@nestjs/config';
 import configuration from './config/configuration';
 import { DatabaseModule } from './database/database.module';
 import { EstablishmentsModule } from './modules/global/establishments/establishments.module';
+import { DirectoryModule } from './modules/global/directory/directory.module';
+import { ReferenceModule } from './modules/global/reference/reference.module';
+import { RealtimeModule } from './modules/realtime/realtime.module';
 import { AuthModule } from './modules/tenant/auth/auth.module';
 import { UsersModule } from './modules/tenant/users/users.module';
 import { CatalogModule } from './modules/tenant/catalog/catalog.module';
@@ -23,6 +26,9 @@ import { UnitsModule } from './modules/tenant/units/units.module';
       load: [configuration],
     }),
     DatabaseModule,
+    DirectoryModule,
+    ReferenceModule,
+    RealtimeModule,
     EstablishmentsModule,
     AuthModule,
     UsersModule,

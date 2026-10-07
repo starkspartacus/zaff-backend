@@ -7,11 +7,13 @@ import { TenantGuard } from '../../../common/guards/tenant.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
 import { Role } from '../../../common/enums/role.enum';
+import { Invalidates } from '../../realtime/invalidates.decorator';
 import { CurrentTenant } from '../../../common/decorators/current-tenant.decorator';
 
 @ApiTags('Tenant - Stock')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, TenantGuard, RolesGuard)
+@Invalidates('products', 'stock', 'dashboard')
 @Controller('stock')
 export class StockController {
   constructor(private readonly stockService: StockService) {}

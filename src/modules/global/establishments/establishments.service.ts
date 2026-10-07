@@ -9,6 +9,8 @@ import { TenantUser, TenantUserSchema } from '../../tenant/common/schemas/tenant
 import { Role } from '../../../common/enums/role.enum';
 import { CreateEstablishmentDto } from './dto/create-establishment.dto';
 import { UpdateEstablishmentDto } from './dto/update-establishment.dto';
+import { DirectoryService } from '../directory/directory.service';
+import { normalizePhone } from '../../../common/utils/identifier';
 
 @Injectable()
 export class EstablishmentsService {
@@ -18,6 +20,7 @@ export class EstablishmentsService {
     @InjectModel(Establishment.name, GLOBAL_CONNECTION)
     private readonly establishmentModel: Model<EstablishmentDocument>,
     private readonly tenantConnectionService: TenantConnectionService,
+    private readonly directoryService: DirectoryService,
   ) {}
 
   private slugify(text: string): string {
@@ -52,7 +55,7 @@ export class EstablishmentsService {
     this.logger.log(`Created establishment '${establishment.name}' with DB '${databaseName}'`);
 
     // Création du premier compte administrateur dans la base dédiée du tenant
-    const adminPhone = dto.adminPhone || dto.phone || '+2250102030405';
+    const adminPhone = normalizePhone(dto.adminPhone || dto.phone || '+2250102030405');
     const rawPassword = dto.adminPassword || 'Admin1234!';
     const hashedPassword = await bcrypt.hash(rawPassword, 10);
 
@@ -61,7 +64,7 @@ export class EstablishmentsService {
       TenantUser.name,
       TenantUserSchema,
     );
-    await userModel.create({
+    const admin = await userModel.create({
       name: dto.adminName || `Admin ${dto.name}`,
       email: dto.email || null,
       phone: adminPhone,
@@ -69,6 +72,7 @@ export class EstablishmentsService {
       role: Role.ADMIN,
       isActive: true,
     });
+    await this.directoryService.syncUser(establishment._id, admin);
     this.logger.log(`Initial admin user created in tenant DB '${databaseName}'`);
 
     return establishment;

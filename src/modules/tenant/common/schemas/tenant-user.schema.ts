@@ -18,7 +18,7 @@ export class TenantUser {
   @Prop({ required: true })
   password: string;
 
-  @Prop({ required: true, enum: [...Object.values(Role), 'standard'], default: Role.SELLER })
+  @Prop({ type: String, required: true, enum: [...Object.values(Role), 'standard'], default: Role.SELLER })
   role: Role;
 
   @Prop({ default: true })

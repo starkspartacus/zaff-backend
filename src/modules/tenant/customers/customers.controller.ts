@@ -4,11 +4,13 @@ import { CustomersService } from './customers.service';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../../../common/guards/tenant.guard';
+import { Invalidates } from '../../realtime/invalidates.decorator';
 import { CurrentTenant } from '../../../common/decorators/current-tenant.decorator';
 
 @ApiTags('Tenant - Customers & Resellers')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, TenantGuard)
+@Invalidates('customers')
 @Controller('customers')
 export class CustomersController {
   constructor(private readonly customersService: CustomersService) {}

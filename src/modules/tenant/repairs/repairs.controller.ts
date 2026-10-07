@@ -4,11 +4,13 @@ import { RepairsService } from './repairs.service';
 import { CreateRepairDto } from './dto/create-repair.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../../../common/guards/tenant.guard';
+import { Invalidates } from '../../realtime/invalidates.decorator';
 import { CurrentTenant } from '../../../common/decorators/current-tenant.decorator';
 
 @ApiTags('Tenant - Repairs (SAV)')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, TenantGuard)
+@Invalidates('repairs', 'dashboard')
 @Controller('repairs')
 export class RepairsController {
   constructor(private readonly repairsService: RepairsService) {}

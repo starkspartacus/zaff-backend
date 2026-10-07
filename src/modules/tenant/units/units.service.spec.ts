@@ -14,6 +14,8 @@ describe('Unités à N° de série : mise en stock et vente par scan', () => {
   let sales: SalesService;
   let units: UnitsService;
   let iphone: any;
+  let notified: any[];
+  let invalidated: string[][];
   let cable: any;
 
   const stockOf = (p: any) => conn.models.Product.docs.find((d) => d._id === p._id).stockQuantity;
@@ -21,8 +23,14 @@ describe('Unités à N° de série : mise en stock et vente par scan', () => {
 
   beforeEach(async () => {
     conn = fakeTenantConnection({ ProductUnit: ['serialNumber'] });
-    sales = new SalesService(conn as any);
-    units = new UnitsService(conn as any, sales);
+    notified = [];
+    invalidated = [];
+    const notifications: any = {
+      notify: async (_db: string, n: any) => notified.push(n),
+      invalidate: (_db: string, scopes: string[]) => invalidated.push(scopes),
+    };
+    sales = new SalesService(conn as any, notifications);
+    units = new UnitsService(conn as any, sales, notifications);
     const products = conn.getModel(DB, 'Product');
     iphone = await products.create({
       name: 'iPhone 15 Pro', sku: 'IPH15P', category: 'smartphones', barcode: '0194253401230',
@@ -131,5 +139,25 @@ describe('Unités à N° de série : mise en stock et vente par scan', () => {
     await units.updateStatus(DB, String((created[0] as any)._id), { status: UnitStatus.DEFECTIVE, notes: 'Écran rayé' });
     expect(stockOf(iphone)).toBe(0);
     await expect(units.sell(DB, { serialNumber: 'IMEI0001' }, seller)).rejects.toThrow("n'est pas disponible à la vente");
+  });
+
+  it('notifie le propriétaire de la mise en stock et de la vente, et alerte en cas de rupture', async () => {
+    iphone.minStockAlert = 0;
+    await units.addUnits(DB, { productId: String(iphone._id), serialNumbers: ['IMEI0001'] }, storekeeper);
+    expect(notified[0]).toMatchObject({ type: 'units.added', roles: ['admin'], data: { count: 1 } });
+
+    await units.sell(DB, { serialNumber: 'IMEI0001' }, seller);
+    const sale = notified.find((n) => n.type === 'sale.created');
+    expect(sale).toMatchObject({ roles: ['admin'], data: { invoiceNumber: 1001, amount: 850000, sellerName: seller.name } });
+    expect(sale.message).toContain('Awa (vendeuse) a vendu iPhone 15 Pro');
+
+    const low = notified.find((n) => n.type === 'stock.low');
+    expect(low).toMatchObject({ title: 'Rupture de stock', roles: ['admin', 'storekeeper'], level: 'error' });
+    expect(invalidated.at(-1)).toEqual(expect.arrayContaining(['sales', 'units', 'products', 'dashboard', 'my-stats']));
+  });
+
+  it("n'envoie aucune notification quand la vente échoue", async () => {
+    await expect(units.sell(DB, { serialNumber: 'INCONNU' }, seller)).rejects.toBeInstanceOf(NotFoundException);
+    expect(notified).toHaveLength(0);
   });
 });

@@ -8,11 +8,13 @@ import { TenantGuard } from '../../../common/guards/tenant.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
 import { Role } from '../../../common/enums/role.enum';
+import { Invalidates } from '../../realtime/invalidates.decorator';
 import { CurrentTenant } from '../../../common/decorators/current-tenant.decorator';
 
 @ApiTags('Tenant - Users')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, TenantGuard, RolesGuard)
+@Invalidates('users')
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
@@ -20,8 +22,8 @@ export class UsersController {
   @Post()
   @Roles(Role.ADMIN, Role.SUPERADMIN)
   @ApiOperation({ summary: 'Créer un collaborateur pour la boutique' })
-  create(@CurrentTenant('databaseName') db: string, @Body() dto: CreateUserDto) {
-    return this.usersService.create(db, dto);
+  create(@CurrentTenant() tenant: any, @Body() dto: CreateUserDto) {
+    return this.usersService.create(tenant.databaseName, tenant._id, dto);
   }
 
   @Get()
@@ -41,14 +43,14 @@ export class UsersController {
   @Put(':id')
   @Roles(Role.ADMIN, Role.SUPERADMIN)
   @ApiOperation({ summary: 'Mettre à jour un collaborateur' })
-  update(@CurrentTenant('databaseName') db: string, @Param('id') id: string, @Body() dto: UpdateUserDto) {
-    return this.usersService.update(db, id, dto);
+  update(@CurrentTenant() tenant: any, @Param('id') id: string, @Body() dto: UpdateUserDto) {
+    return this.usersService.update(tenant.databaseName, tenant._id, id, dto);
   }
 
   @Delete(':id')
   @Roles(Role.ADMIN, Role.SUPERADMIN)
   @ApiOperation({ summary: 'Supprimer un collaborateur' })
-  remove(@CurrentTenant('databaseName') db: string, @Param('id') id: string) {
-    return this.usersService.remove(db, id);
+  remove(@CurrentTenant() tenant: any, @Param('id') id: string) {
+    return this.usersService.remove(tenant.databaseName, tenant._id, id);
   }
 }

@@ -11,6 +11,7 @@ import { Warranty, WarrantySchema } from '../common/schemas/warranty.schema';
 import { StockMovementType, StockReferenceType } from '../../../common/enums/stock-movement.enum';
 import { UnitStatus } from '../../../common/enums/unit-status.enum';
 import { CreateSaleDto, ReturnSaleDto } from './dto/create-sale.dto';
+import { NotificationsService } from '../notifications/notifications.service';
 
 export interface Actor {
   userId: string;
@@ -31,7 +32,10 @@ const SOLD_FIELDS_RESET = {
 
 @Injectable()
 export class SalesService {
-  constructor(private readonly tenantConnectionService: TenantConnectionService) {}
+  constructor(
+    private readonly tenantConnectionService: TenantConnectionService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   private getSaleModel(db: string) { return this.tenantConnectionService.getModel<Sale>(db, Sale.name, SaleSchema); }
   private getSaleReturnModel(db: string) { return this.tenantConnectionService.getModel<SaleReturn>(db, SaleReturn.name, SaleReturnSchema); }
@@ -89,6 +93,7 @@ export class SalesService {
 
     // 2. Réservation atomique des unités et du stock (annulée en cas d'échec)
     const rollback: Array<() => Promise<unknown>> = [];
+    const lowStock: any[] = [];
     const undo = async () => {
       for (const fn of rollback.reverse()) await fn().catch(() => undefined);
     };
@@ -121,6 +126,7 @@ export class SalesService {
           throw new BadRequestException(`Stock insuffisant pour '${product.name}' (Dispo: ${product.stockQuantity}).`);
         }
         rollback.push(() => prodModel.updateOne({ _id: product._id }, { $inc: { stockQuantity: item.quantity } }));
+        if (updated.stockQuantity <= (updated.minStockAlert ?? 0)) lowStock.push(updated);
       }
     } catch (e) {
       await undo();
@@ -213,7 +219,39 @@ export class SalesService {
       }
     }
 
+    await this.publishSale(db, sale, seller, lowStock);
     return sale;
+  }
+
+  /** Temps réel : le propriétaire voit la vente, le magasinier les ruptures */
+  private async publishSale(db: string, sale: any, seller: Actor | undefined, lowStock: any[]) {
+    const items = sale.items.map((i: any) => (i.quantity > 1 ? `${i.quantity} × ${i.productName}` : i.productName));
+    await this.notifications.notify(db, {
+      type: 'sale.created',
+      title: 'Nouvelle vente',
+      message: `${seller?.name || 'Caisse'} a vendu ${items.join(', ')}`,
+      level: 'success',
+      roles: ['admin'],
+      actorId: seller?.userId,
+      data: {
+        saleId: String(sale._id),
+        invoiceNumber: sale.invoiceNumber,
+        amount: sale.total,
+        sellerName: seller?.name || null,
+        paymentMethod: sale.paymentMethod,
+      },
+    });
+    for (const p of lowStock) {
+      await this.notifications.notify(db, {
+        type: 'stock.low',
+        title: p.stockQuantity <= 0 ? 'Rupture de stock' : 'Stock bas',
+        message: p.stockQuantity <= 0 ? `${p.name} est en rupture.` : `${p.name} : plus que ${p.stockQuantity} en stock.`,
+        level: p.stockQuantity <= 0 ? 'error' : 'warning',
+        roles: ['admin', 'storekeeper'],
+        data: { productId: String(p._id), stockQuantity: p.stockQuantity },
+      });
+    }
+    this.notifications.invalidate(db, ['sales', 'units', 'products', 'stock', 'dashboard', 'my-stats', 'customers']);
   }
 
   /** Message clair expliquant pourquoi une unité ne peut pas être vendue */
@@ -280,6 +318,7 @@ export class SalesService {
     sale.returnDate = new Date();
     await sale.save();
 
+    this.notifications.invalidate(db, ['sales', 'units', 'products', 'stock', 'dashboard', 'my-stats']);
     return { message: 'Retour enregistré avec succès et stock réintégré.', returns: createdReturns };
   }
 }
