@@ -109,6 +109,11 @@ export class CreateProductDto {
   @IsOptional()
   condition?: 'new' | 'refurbished' | 'used';
 
+  @ApiPropertyOptional({ description: 'Appareil du catalogue global (id)' })
+  @IsOptional()
+  @Matches(/^[a-f0-9]{24}$/, { message: 'Appareil invalide.' })
+  deviceId?: string | null;
+
   @ApiPropertyOptional({ description: "Photo de la base d'images partagée (id), null pour la retirer" })
   @IsOptional()
   @Matches(/^[a-f0-9]{24}$/, { message: 'Photo invalide.' })

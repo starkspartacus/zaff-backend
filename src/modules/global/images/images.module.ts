@@ -5,6 +5,7 @@ import { EstablishmentsModule } from '../establishments/establishments.module';
 import { CatalogImage, CatalogImageSchema } from './schemas/catalog-image.schema';
 import { ImagesController } from './images.controller';
 import { ImagesService } from './images.service';
+import { PlatformAdminGuard } from '../platform/platform.guard';
 import { ConfigService } from '@nestjs/config';
 import { DatabaseStorage, MEDIA_STORAGE, UploadThingStorage } from './media-storage';
 
@@ -13,6 +14,7 @@ import { DatabaseStorage, MEDIA_STORAGE, UploadThingStorage } from './media-stor
   controllers: [ImagesController],
   providers: [
     ImagesService,
+    PlatformAdminGuard,
     {
       // UploadThing si UPLOADTHING_TOKEN est défini, sinon MongoDB
       provide: MEDIA_STORAGE,

@@ -24,6 +24,8 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       phone: payload.phone,
       email: payload.email,
       name: payload.name,
+      /** Jeton de l'administrateur de la plateforme (aucune boutique) */
+      platform: payload.platform === true,
     };
   }
 }

@@ -54,6 +54,10 @@ export class Product {
   @Prop({ enum: ['new', 'refurbished', 'used'], default: 'new' })
   condition: 'new' | 'refurbished' | 'used';
 
+  /** Appareil du catalogue global d'où vient le produit (photos, capacités, coloris) */
+  @Prop({ default: null })
+  deviceId: string;
+
   /** Photo choisie dans la base d'images partagée (`catalog_images`, base globale) */
   @Prop({ default: null })
   imageId: string;

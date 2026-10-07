@@ -28,6 +28,8 @@ describe('validateEnv', () => {
       VAPID_PRIVATE_KEY: null,
       VAPID_SUBJECT: 'mailto:contact@zaff.app',
       UPLOADTHING_TOKEN: null,
+      PLATFORM_ADMIN_EMAIL: null,
+      PLATFORM_ADMIN_PASSWORD: null,
     });
   });
 
@@ -43,5 +45,17 @@ describe('validateEnv — UploadThing', () => {
     expect(validateEnv(base).UPLOADTHING_TOKEN).toBeNull();
     expect(validateEnv({ ...base, UPLOADTHING_TOKEN: 'eyJhcGlLZXkiOiJza19saXZlX2FiY2RlZmdoaWprbG1ub3AifQ' }).UPLOADTHING_TOKEN).toMatch(/^eyJ/);
     expect(() => validateEnv({ ...base, UPLOADTHING_TOKEN: 'abc' })).toThrow(/UPLOADTHING_TOKEN/);
+  });
+});
+
+describe('validateEnv — administrateur de la plateforme', () => {
+  const base = { MONGODB_URI: 'mongodb://localhost', JWT_SECRET: 'dev-secret' };
+  it('e-mail et mot de passe vont ensemble, mot de passe robuste en production', () => {
+    expect(validateEnv({ ...base, PLATFORM_ADMIN_EMAIL: 'Admin@Zaff.app', PLATFORM_ADMIN_PASSWORD: 'secret' }).PLATFORM_ADMIN_EMAIL).toBe('admin@zaff.app');
+    expect(() => validateEnv({ ...base, PLATFORM_ADMIN_EMAIL: 'admin@zaff.app' })).toThrow(/vont ensemble/);
+    expect(() => validateEnv({ ...base, PLATFORM_ADMIN_EMAIL: 'pas-un-mail', PLATFORM_ADMIN_PASSWORD: 'x' })).toThrow(/adresse e-mail/);
+    const prod = { ...base, NODE_ENV: 'production', JWT_SECRET: 'x'.repeat(40), PLATFORM_ADMIN_EMAIL: 'a@b.co' };
+    expect(() => validateEnv({ ...prod, PLATFORM_ADMIN_PASSWORD: 'court' })).toThrow(/12 caractères/);
+    expect(validateEnv({ ...prod, PLATFORM_ADMIN_PASSWORD: '$2b$12$abcdefghijklmnopqrstuv' }).PLATFORM_ADMIN_PASSWORD).toMatch(/^\$2b/);
   });
 });

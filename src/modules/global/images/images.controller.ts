@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, ForbiddenException, Get, HttpCode, Param, Post, Query, Res, UploadedFiles, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, Get, HttpCode, Param, Post, Query, Res, UploadedFiles, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
@@ -10,6 +10,7 @@ import { Role } from '../../../common/enums/role.enum';
 import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { EstablishmentsService } from '../establishments/establishments.service';
 import { ImagesService, MAX_IMAGE_BYTES } from './images.service';
+import { PlatformAdminGuard } from '../platform/platform.guard';
 
 class ImageQueryDto {
   @IsOptional() @IsString() @MaxLength(80) brand?: string;
@@ -82,11 +83,11 @@ export class ImagesController {
     res.end(Buffer.from(img.data || []));
   }
 
+  /** Envoi direct dans la base partagée : réservé à l'administrateur de la plateforme (les boutiques n'envoient plus de photos) */
   @Post()
   @ApiBearerAuth()
   @ApiConsumes('multipart/form-data')
-  @UseGuards(JwtAuthGuard, RolesGuard)
-  @Roles(Role.ADMIN, Role.STOREKEEPER)
+  @UseGuards(JwtAuthGuard, PlatformAdminGuard)
   @UseInterceptors(
     FileFieldsInterceptor(
       [
@@ -102,15 +103,7 @@ export class ImagesController {
     @Body() dto: ImageUploadDto,
     @CurrentUser() user: any,
   ) {
-    const library = dto.library === 'true';
-    if (library && user?.role !== Role.ADMIN) throw new ForbiddenException("Seul le propriétaire peut importer des photos dans la photothèque.");
-    const est = user?.tenantId ? await this.establishments.findById(user.tenantId).catch(() => null) : null;
-    return this.images.upload(
-      files?.file?.[0],
-      dto,
-      { establishmentId: user?.tenantId, establishmentName: est?.name, name: user?.name },
-      { library, thumb: files?.thumb?.[0] },
-    );
+    return this.images.upload(files?.file?.[0], dto, { establishmentId: null, establishmentName: 'ZAFF', name: user?.name }, { library: true, thumb: files?.thumb?.[0] });
   }
 
   /** Annule une photo envoyée pour un produit dont l'enregistrement a échoué (évite les fichiers orphelins) */

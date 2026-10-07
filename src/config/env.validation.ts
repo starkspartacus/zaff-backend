@@ -16,6 +16,10 @@ export interface EnvVars {
   VAPID_SUBJECT: string;
   /** Stockage des photos / vidéos sur UploadThing (facultatif : sans jeton, stockage dans MongoDB) */
   UPLOADTHING_TOKEN: string | null;
+  /** Administrateur de la plateforme ZAFF (catalogue global, photos) : facultatif, sans eux l'espace admin est fermé */
+  PLATFORM_ADMIN_EMAIL: string | null;
+  /** Mot de passe en clair ou empreinte bcrypt ($2…) */
+  PLATFORM_ADMIN_PASSWORD: string | null;
 }
 
 const MIN_SECRET_LENGTH = 32;
@@ -46,6 +50,14 @@ export function validateEnv(raw: Record<string, unknown>): EnvVars {
   const uploadthingToken = get('UPLOADTHING_TOKEN');
   if (uploadthingToken && uploadthingToken.length < 20) errors.push('UPLOADTHING_TOKEN semble incomplet (Dashboard UploadThing > API Keys > V7).');
 
+  const adminEmail = get('PLATFORM_ADMIN_EMAIL').toLowerCase();
+  const adminPassword = get('PLATFORM_ADMIN_PASSWORD');
+  if (!!adminEmail !== !!adminPassword) errors.push('PLATFORM_ADMIN_EMAIL et PLATFORM_ADMIN_PASSWORD vont ensemble (espace administrateur).');
+  if (adminEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(adminEmail)) errors.push('PLATFORM_ADMIN_EMAIL doit être une adresse e-mail.');
+  if (adminPassword && !adminPassword.startsWith('$2') && nodeEnv === 'production' && adminPassword.length < 12) {
+    errors.push('PLATFORM_ADMIN_PASSWORD doit faire au moins 12 caractères en production (ou être une empreinte bcrypt).');
+  }
+
   const port = Number(get('PORT') || 8000);
   if (!Number.isInteger(port) || port <= 0) errors.push('PORT doit être un nombre entier positif.');
 
@@ -70,5 +82,7 @@ export function validateEnv(raw: Record<string, unknown>): EnvVars {
     VAPID_PRIVATE_KEY: vapidPrivate || null,
     VAPID_SUBJECT: vapidSubject,
     UPLOADTHING_TOKEN: uploadthingToken || null,
+    PLATFORM_ADMIN_EMAIL: adminEmail || null,
+    PLATFORM_ADMIN_PASSWORD: adminPassword || null,
   };
 }

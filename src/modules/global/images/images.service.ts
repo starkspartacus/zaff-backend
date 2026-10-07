@@ -101,6 +101,7 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
       pending: !!img.pending,
       createdAt: img.createdAt,
       hidden: !!img.hidden,
+      deviceId: img.deviceId || null,
       reports: (img.reports || []).length,
       hasThumb: !!(img.thumbKey || img.thumbBytes),
       url: `/global/images/${img._id}/file`,
@@ -141,7 +142,7 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
    */
   async upload(
     file: { buffer: Buffer; size: number } | undefined,
-    meta: { brand: string; model: string; color?: string; category?: string },
+    meta: { brand: string; model: string; color?: string; category?: string; deviceId?: string },
     by: ImageUploader,
     opts: { library?: boolean; thumb?: { buffer: Buffer; size: number } } = {},
   ) {
@@ -171,6 +172,7 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
       }
       const created = await this.model.create({
         category: meta.category || null,
+        deviceId: meta.deviceId || null,
         brand: meta.brand.trim(),
         model: meta.model.trim(),
         color: meta.color?.trim() || null,
@@ -327,5 +329,36 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
       mine: { photos: mine.length, bytes: sum(mine), library: mine.filter((d) => d.library).length },
       provider,
     };
+  }
+
+  // ─── Administrateur de la plateforme ───
+
+  /**
+   * Retrait d'une photo par l'administrateur : effacée (fichier + fiche) si aucun produit ne l'utilise,
+   * sinon masquée de la base partagée (les produits qui l'utilisent la gardent).
+   */
+  async adminRemove(id: string) {
+    if (!Types.ObjectId.isValid(id)) return { deleted: false, hidden: false };
+    const img: any = await this.model.findById(id).lean().exec();
+    if (!img) return { deleted: false, hidden: false };
+    if ((img.usage || 0) > 0) {
+      await this.model.updateOne({ _id: id }, { $set: { hidden: true, library: false, deviceId: null } });
+      return { deleted: false, hidden: true };
+    }
+    await this.destroy(img);
+    return { deleted: true, hidden: false };
+  }
+
+  /** Photos signalées par les boutiques (à traiter par l'administrateur) */
+  async reported() {
+    const docs = await this.model.find({ $or: [{ hidden: true }, { reports: { $ne: [] } }] }).sort({ createdAt: -1 }).limit(200).lean().exec();
+    return docs.map((d) => this.view(d));
+  }
+
+  /** L'administrateur garde la photo : signalements effacés, de nouveau proposée */
+  async clearReports(id: string) {
+    if (!Types.ObjectId.isValid(id)) throw new NotFoundException('Image introuvable.');
+    await this.model.updateOne({ _id: id }, { $set: { reports: [], hidden: false } });
+    return { kept: true };
   }
 }

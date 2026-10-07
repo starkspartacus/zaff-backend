@@ -22,6 +22,9 @@ import { UnitsService } from '../src/modules/tenant/units/units.service';
 
 process.env.MONGODB_URI ||= 'mongodb://memoire';
 process.env.JWT_SECRET ||= 'memory-server-secret';
+// Espace administrateur de démonstration (/admin)
+process.env.PLATFORM_ADMIN_EMAIL ||= 'admin@zaff.app';
+process.env.PLATFORM_ADMIN_PASSWORD ||= 'admin-zaff-demo';
 
 const UNIQUE = { ProductUnit: ['serialNumber'], CreditNote: ['code'], ProductReturn: ['returnNumber'], PushSubscriptionRecord: ['endpoint'] };
 const tenants = new Map<string, ReturnType<typeof fakeTenantConnection>>();
@@ -31,7 +34,7 @@ const tenantService = {
   getTenantConnection: () => ({}),
   getGlobalConnection: () => ({}),
 };
-const global = { Establishment: new FakeModel(['slug']), UserDirectory: new FakeModel(), ReferenceCategory: new FakeModel(['slug']), CatalogImage: new FakeModel(['sha256']) };
+const global = { Establishment: new FakeModel(['slug']), UserDirectory: new FakeModel(), ReferenceCategory: new FakeModel(['slug']), CatalogImage: new FakeModel(['sha256']), GlobalDevice: new FakeModel() };
 const fakeConnection: any = { model: () => new FakeModel(), models: {}, useDb: () => fakeConnection, close: async () => undefined };
 
 (async () => {
@@ -74,7 +77,7 @@ const fakeConnection: any = { model: () => new FakeModel(), models: {}, useDb: (
 
   const port = Number(process.env.PORT || 8000);
   await app.listen(port);
-  console.log(`Backend en mémoire prêt : http://localhost:${port}/api (comptes +2250700000001/2/3, mot de passe « secret »)`);
+  console.log(`Backend en mémoire prêt : http://localhost:${port}/api (comptes +2250700000001/2/3, mot de passe « secret » ; admin plateforme ${process.env.PLATFORM_ADMIN_EMAIL} / ${process.env.PLATFORM_ADMIN_PASSWORD})`);
 })().catch((e) => {
   console.error('MEMORY SERVER FAILED', e);
   process.exit(1);

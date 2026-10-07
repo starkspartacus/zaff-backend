@@ -71,6 +71,10 @@ export class CatalogImage {
   @Prop({ default: 0 })
   thumbBytes: number;
 
+  /** Appareil du catalogue global auquel la photo appartient (photos de l'administrateur) */
+  @Prop({ default: null, index: true })
+  deviceId: string;
+
   /** Boutiques qui ont signalé la photo (inadaptée, mauvais modèle…) */
   @Prop({ type: [Types.ObjectId], default: [] })
   reports: Types.ObjectId[];

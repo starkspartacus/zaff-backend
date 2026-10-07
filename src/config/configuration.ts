@@ -14,6 +14,10 @@ export default () => {
       secret: env.JWT_SECRET,
       expiresIn: env.JWT_EXPIRES_IN,
     },
+    platformAdmin: {
+      email: env.PLATFORM_ADMIN_EMAIL,
+      password: env.PLATFORM_ADMIN_PASSWORD,
+    },
     media: {
       uploadthingToken: env.UPLOADTHING_TOKEN,
     },

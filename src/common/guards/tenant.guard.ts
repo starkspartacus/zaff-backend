@@ -7,6 +7,10 @@ export class TenantGuard implements CanActivate {
 
   async canActivate(context: ExecutionContext): Promise<boolean> {
     const req = context.switchToHttp().getRequest();
+    // L'administrateur de la plateforme gère le catalogue global, jamais les données d'une boutique
+    if (req.user?.platform) {
+      throw new ForbiddenException("Compte administrateur de la plateforme : pas d'accès aux données des boutiques.");
+    }
     // 1. Depuis le token JWT de l'utilisateur authentifié
     let slug = req.user?.tenantSlug;
     let id = req.user?.tenantId;
