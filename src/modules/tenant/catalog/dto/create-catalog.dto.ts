@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsNumber, IsOptional, IsArray, IsBoolean } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsOptional, IsArray, IsBoolean, IsIn, MaxLength } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateCategoryDto {
@@ -103,6 +103,17 @@ export class CreateProductDto {
   @IsString()
   @IsOptional()
   description?: string;
+
+  @ApiPropertyOptional({ enum: ['new', 'refurbished', 'used'], default: 'new', description: 'État à la vente (contrat)' })
+  @IsIn(['new', 'refurbished', 'used'])
+  @IsOptional()
+  condition?: 'new' | 'refurbished' | 'used';
+
+  @ApiPropertyOptional({ example: 'Chargeur, câble USB-C, boîte' })
+  @IsString()
+  @MaxLength(300)
+  @IsOptional()
+  accessories?: string;
 
   @ApiPropertyOptional()
   @IsOptional()

@@ -20,8 +20,9 @@ Priorité absolue : une expérience simple et compréhensible (UI et messages d'
 
 **Une base par boutique** `zaff_tenant_<slug>` (via `TenantConnectionService.getModel(db, name, schema)`) :
 users, products, product_units, sales, sale_returns, stock_movements, customers, suppliers, purchase_orders,
-repairs, warranties, categories, brands, notifications, push_subscriptions, cash_closings, product_returns, credit_notes.
-Paramètres de la boutique (dont `settings.returnPolicy`) : dans `establishments` (base globale), chargés à chaque requête par `TenantGuard`.
+repairs, warranties, categories, brands, notifications, push_subscriptions, cash_closings, product_returns, credit_notes,
+sales_contract_versions.
+Paramètres de la boutique (dont `settings.returnPolicy`, `settings.salesContract`) : dans `establishments` (base globale), chargés à chaque requête par `TenantGuard`.
 Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenant('databaseName')` aux services.
 
 ## Pays, téléphones, inscription
@@ -75,6 +76,23 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 - **Caisse** : la part d'une vente payée par avoir n'est pas comptée comme encaissée ; les remboursements donnés par
   le collaborateur sont déduits de ses espèces / Mobile Money à remettre (`refunds` dans la clôture).
 - Tableau de bord : retours de la période déduits (`sales.returns`, `sales.netRevenue`).
+
+## Contrat de vente et garantie (`contracts/`)
+- Remis au client **après chaque vente** : `GET /sales/:id/contract` (propriétaire, vendeur) renvoie le document prêt à
+  imprimer (identification vendeur / client / produits, articles numérotés, fiche de garantie). Le frontend l'affiche et l'imprime.
+- **Modèle par défaut** (`contract-template.ts`, inspiré du contrat OTTAZIA : 35 articles) + article « Retour, échange
+  et panne » **généré depuis la politique de retour** : le contrat dit exactement ce que l'application applique.
+  Variables : `{{boutique}}` (dénomination sociale sinon nom), `{{garantie}}`, `{{pays}}`, `{{droit}}`, `{{loi}}`
+  (loi n° 2016-412 pour la Côte d'Ivoire, formulation neutre ailleurs). Texte : paragraphes, puces « - ».
+- **Personnalisation** (propriétaire) `GET/PUT /settings/sales-contract` : informations légales (raison sociale, forme,
+  RCCM, N° contribuable, représentant), titre, introduction, mode `default` | `custom` (articles activés / modifiés /
+  ajoutés ; vendeur, client, produit toujours présents), fiche de garantie. `POST /settings/sales-contract/preview` :
+  aperçu d'un brouillon avec une vente fictive.
+- **Versions figées** : chaque enregistrement crée une version (`sales_contract_versions`, `effectiveFrom`) ; une vente
+  est imprimée avec le texte en vigueur le jour de la vente (sans version antérieure : modèle par défaut).
+- Garantie d'un appareil : `effectiveWarrantyEnd` (`returns/return-rules.ts`) = garantie enregistrée à la vente, sinon
+  garantie par défaut de la politique — **même règle que les retours**. État (`condition` neuf / reconditionné /
+  occasion) et `accessories` sur le modèle `Product`.
 
 ## Clôture de caisse (`/cash-closings`)
 - Chaque vente porte `sellerId` et `closingId` (null tant qu'elle n'est pas clôturée).

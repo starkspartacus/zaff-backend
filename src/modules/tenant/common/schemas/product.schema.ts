@@ -50,6 +50,14 @@ export class Product {
   @Prop({ default: null })
   description: string;
 
+  /** État à la vente (contrat de garantie) */
+  @Prop({ enum: ['new', 'refurbished', 'used'], default: 'new' })
+  condition: 'new' | 'refurbished' | 'used';
+
+  /** Accessoires fournis avec l'appareil (ex. : chargeur, câble, boîte) */
+  @Prop({ default: null, trim: true })
+  accessories: string;
+
   @Prop({ type: Object, default: {} })
   specifications: Record<string, any>;
 

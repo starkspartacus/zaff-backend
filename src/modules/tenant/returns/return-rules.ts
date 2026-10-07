@@ -50,6 +50,16 @@ function moneyOptions(toggles: { creditNote: boolean; refund: boolean; exchange:
 }
 
 /**
+ * Fin de garantie d'un appareil : celle enregistrée à la vente, sinon la garantie par défaut de la boutique.
+ * Même règle pour les retours et pour le contrat remis au client.
+ */
+export function effectiveWarrantyEnd(policy: ReturnPolicy, soldAt: Date, recorded: Date | null): Date | null {
+  if (recorded) return recorded;
+  const months = policy.defective.defaultWarrantyMonths;
+  return months > 0 ? new Date(new Date(soldAt).setMonth(soldAt.getMonth() + months)) : null;
+}
+
+/**
  * Évalue ce que la boutique peut proposer pour un appareil vendu.
  * Fonction pure : utilisée pour l'affichage (vendeur) ET revérifiée au moment d'enregistrer le retour.
  */
@@ -59,11 +69,7 @@ export function evaluateReturn(
 ): ReturnEvaluation {
   const now = ctx.now || new Date();
   const days = Math.max(0, Math.floor((now.getTime() - ctx.soldAt.getTime()) / DAY));
-  const warrantyEnd =
-    ctx.warrantyEnd ||
-    (policy.defective.defaultWarrantyMonths > 0
-      ? new Date(new Date(ctx.soldAt).setMonth(ctx.soldAt.getMonth() + policy.defective.defaultWarrantyMonths))
-      : null);
+  const warrantyEnd = effectiveWarrantyEnd(policy, ctx.soldAt, ctx.warrantyEnd);
   const underWarranty = !!warrantyEnd && now <= warrantyEnd;
 
   // ─── Changement d'avis (appareil en bon état) ───
