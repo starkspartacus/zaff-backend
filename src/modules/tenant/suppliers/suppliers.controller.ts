@@ -4,11 +4,15 @@ import { SuppliersService } from './suppliers.service';
 import { CreateSupplierDto, CreatePurchaseOrderDto } from './dto/create-supplier.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../../../common/guards/tenant.guard';
+import { RolesGuard } from '../../../common/guards/roles.guard';
+import { Roles } from '../../../common/decorators/roles.decorator';
+import { Role } from '../../../common/enums/role.enum';
 import { CurrentTenant } from '../../../common/decorators/current-tenant.decorator';
 
 @ApiTags('Tenant - Suppliers & Orders')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, TenantGuard)
+@UseGuards(JwtAuthGuard, TenantGuard, RolesGuard)
+@Roles(Role.ADMIN, Role.STOREKEEPER)
 @Controller('suppliers')
 export class SuppliersController {
   constructor(private readonly suppliersService: SuppliersService) {}

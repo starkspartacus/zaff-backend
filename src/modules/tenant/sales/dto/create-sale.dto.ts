@@ -113,7 +113,7 @@ export class ReturnSaleDto {
   @IsOptional()
   reason?: string;
 
-  @ApiProperty({ example: [{ productId: '64e...', quantity: 1 }] })
+  @ApiProperty({ example: [{ productId: '64e...', quantity: 1, serialNumber: 'IMEI...' }] })
   @IsArray()
-  items: Array<{ productId: string; quantity: number }>;
+  items: Array<{ productId: string; quantity: number; serialNumber?: string }>;
 }

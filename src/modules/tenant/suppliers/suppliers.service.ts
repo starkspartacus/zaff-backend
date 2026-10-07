@@ -57,7 +57,8 @@ export class SuppliersService {
     // Réception des articles -> Incrément du stock
     for (const item of order.items) {
       const product = await prodModel.findById(item.productId);
-      if (product) {
+      // Les appareils à N° de série entrent en stock uniquement par scan (mise en stock)
+      if (product && !product.hasSerialNumbers) {
         product.stockQuantity += item.quantity;
         await product.save();
         await movModel.create({

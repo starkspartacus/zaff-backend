@@ -5,6 +5,7 @@ import { EstablishmentsService } from '../../global/establishments/establishment
 import { TenantConnectionService } from '../../../database/tenant-connection.service';
 import { TenantUser, TenantUserSchema } from '../common/schemas/tenant-user.schema';
 import { LoginDto } from './dto/login.dto';
+import { normalizeRole } from '../../../common/enums/role.enum';
 
 @Injectable()
 export class AuthService {
@@ -81,7 +82,7 @@ export class AuthService {
       tenantId: establishment._id,
       tenantSlug: establishment.slug,
       tenantDb: establishment.databaseName,
-      role: user.role,
+      role: normalizeRole(user.role),
       name: user.name,
       phone: user.phone,
       email: user.email,
@@ -96,7 +97,7 @@ export class AuthService {
         name: user.name,
         phone: user.phone,
         email: user.email,
-        role: user.role,
+        role: normalizeRole(user.role),
       },
       establishment: {
         id: establishment._id,

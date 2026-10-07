@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsEnum, IsOptional, IsEmail } from 'class-validator';
+import { IsString, IsNotEmpty, IsIn, IsOptional, IsEmail } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Role } from '../../../../common/enums/role.enum';
 
@@ -23,7 +23,7 @@ export class CreateUserDto {
   @IsNotEmpty()
   password: string;
 
-  @ApiProperty({ enum: Role, default: Role.STANDARD })
-  @IsEnum(Role)
+  @ApiProperty({ enum: [Role.ADMIN, Role.SELLER, Role.STOREKEEPER], default: Role.SELLER })
+  @IsIn([Role.ADMIN, Role.SELLER, Role.STOREKEEPER], { message: 'Rôle invalide (admin, seller ou storekeeper).' })
   role: Role;
 }

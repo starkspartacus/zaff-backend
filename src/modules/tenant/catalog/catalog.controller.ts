@@ -4,11 +4,14 @@ import { CatalogService } from './catalog.service';
 import { CreateCategoryDto, CreateBrandDto, CreateProductDto, SetupHierarchyDto } from './dto/create-catalog.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../../../common/guards/tenant.guard';
+import { RolesGuard } from '../../../common/guards/roles.guard';
+import { Roles } from '../../../common/decorators/roles.decorator';
+import { Role } from '../../../common/enums/role.enum';
 import { CurrentTenant } from '../../../common/decorators/current-tenant.decorator';
 
 @ApiTags('Tenant - Catalog (Products, Categories, Brands)')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, TenantGuard)
+@UseGuards(JwtAuthGuard, TenantGuard, RolesGuard)
 @Controller('catalog')
 export class CatalogController {
   constructor(private readonly catalogService: CatalogService) {}
@@ -19,6 +22,7 @@ export class CatalogController {
     return this.catalogService.getCategories(db);
   }
 
+  @Roles(Role.ADMIN, Role.STOREKEEPER)
   @Post('categories')
   @ApiOperation({ summary: 'Ajouter une catégorie' })
   createCategory(@CurrentTenant('databaseName') db: string, @Body() dto: CreateCategoryDto) {
@@ -31,6 +35,7 @@ export class CatalogController {
     return this.catalogService.getBrands(db);
   }
 
+  @Roles(Role.ADMIN, Role.STOREKEEPER)
   @Post('brands')
   @ApiOperation({ summary: 'Ajouter une marque' })
   createBrand(@CurrentTenant('databaseName') db: string, @Body() dto: CreateBrandDto) {
@@ -49,12 +54,14 @@ export class CatalogController {
     return this.catalogService.getProducts(db, { category, search });
   }
 
+  @Roles(Role.ADMIN, Role.STOREKEEPER)
   @Post('products')
   @ApiOperation({ summary: 'Ajouter un produit' })
   createProduct(@CurrentTenant('databaseName') db: string, @Body() dto: CreateProductDto) {
     return this.catalogService.createProduct(db, dto);
   }
 
+  @Roles(Role.ADMIN, Role.STOREKEEPER)
   @Put('products/:id')
   @ApiOperation({ summary: 'Mettre à jour un produit' })
   updateProduct(
@@ -65,12 +72,14 @@ export class CatalogController {
     return this.catalogService.updateProduct(db, id, dto);
   }
 
+  @Roles(Role.ADMIN, Role.STOREKEEPER)
   @Delete('products/:id')
   @ApiOperation({ summary: 'Supprimer un produit' })
   deleteProduct(@CurrentTenant('databaseName') db: string, @Param('id') id: string) {
     return this.catalogService.deleteProduct(db, id);
   }
 
+  @Roles(Role.ADMIN, Role.STOREKEEPER)
   @Post('hierarchy/setup')
   @ApiOperation({ summary: 'Assistant création hiérarchie Catégorie -> Marques' })
   setupHierarchy(@CurrentTenant('databaseName') db: string, @Body() dto: SetupHierarchyDto) {

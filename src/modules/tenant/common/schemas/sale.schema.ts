@@ -78,6 +78,13 @@ export class Sale {
 
   @Prop({ default: null })
   notes: string;
+
+  // Collaborateur ayant encaissé la vente
+  @Prop({ type: Types.ObjectId, default: null, index: true })
+  sellerId: Types.ObjectId;
+
+  @Prop({ default: null })
+  sellerName: string;
 }
 
 export const SaleSchema = SchemaFactory.createForClass(Sale);

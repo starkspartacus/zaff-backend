@@ -25,12 +25,14 @@ export class UsersController {
   }
 
   @Get()
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
   @ApiOperation({ summary: 'Lister les collaborateurs de la boutique' })
   findAll(@CurrentTenant('databaseName') db: string) {
     return this.usersService.findAll(db);
   }
 
   @Get(':id')
+  @Roles(Role.ADMIN, Role.SUPERADMIN)
   @ApiOperation({ summary: 'Détails d\'un collaborateur' })
   findOne(@CurrentTenant('databaseName') db: string, @Param('id') id: string) {
     return this.usersService.findById(db, id);

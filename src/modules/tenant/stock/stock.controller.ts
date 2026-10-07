@@ -4,11 +4,14 @@ import { StockService } from './stock.service';
 import { CreateStockMovementDto } from './dto/create-stock-movement.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../../../common/guards/tenant.guard';
+import { RolesGuard } from '../../../common/guards/roles.guard';
+import { Roles } from '../../../common/decorators/roles.decorator';
+import { Role } from '../../../common/enums/role.enum';
 import { CurrentTenant } from '../../../common/decorators/current-tenant.decorator';
 
 @ApiTags('Tenant - Stock')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, TenantGuard)
+@UseGuards(JwtAuthGuard, TenantGuard, RolesGuard)
 @Controller('stock')
 export class StockController {
   constructor(private readonly stockService: StockService) {}
@@ -26,6 +29,7 @@ export class StockController {
     return this.stockService.getMovements(db, limit ? Number(limit) : 100);
   }
 
+  @Roles(Role.ADMIN, Role.STOREKEEPER)
   @Post('movements')
   @ApiOperation({ summary: 'Enregistrer une entrée/sortie/ajustement de stock' })
   createMovement(@CurrentTenant('databaseName') db: string, @Body() dto: CreateStockMovementDto) {

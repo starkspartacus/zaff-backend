@@ -66,6 +66,16 @@ export class CreateProductDto {
   @IsOptional()
   brandId?: string;
 
+  @ApiPropertyOptional({ example: '15 Pro Max 256 Go' })
+  @IsString()
+  @IsOptional()
+  model?: string;
+
+  @ApiPropertyOptional({ example: 'Titane naturel' })
+  @IsString()
+  @IsOptional()
+  color?: string;
+
   @ApiProperty({ example: 650000 })
   @IsNumber()
   purchasePrice: number;
@@ -79,9 +89,10 @@ export class CreateProductDto {
   @IsOptional()
   resellerPrice?: number;
 
-  @ApiProperty({ example: 10 })
+  @ApiPropertyOptional({ example: 10, description: 'Ignoré pour les produits à N° de série (stock = unités scannées)' })
   @IsNumber()
-  stockQuantity: number;
+  @IsOptional()
+  stockQuantity?: number;
 
   @ApiPropertyOptional({ example: 3 })
   @IsNumber()

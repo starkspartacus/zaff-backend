@@ -7,6 +7,7 @@ import { RolesGuard } from '../../../common/guards/roles.guard';
 import { Roles } from '../../../common/decorators/roles.decorator';
 import { Role } from '../../../common/enums/role.enum';
 import { CurrentTenant } from '../../../common/decorators/current-tenant.decorator';
+import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 
 @ApiTags('Tenant - Analytics & Reports')
 @ApiBearerAuth()
@@ -21,6 +22,13 @@ export class AnalyticsController {
   @ApiQuery({ name: 'period', required: false, enum: ['day', 'week', 'month', 'year', 'all'] })
   getDashboardStats(@CurrentTenant('databaseName') db: string, @Query('period') period?: string) {
     return this.analyticsService.getDashboardStats(db, period);
+  }
+
+  @Get('me')
+  @ApiOperation({ summary: 'Mon activité : mes ventes (vendeur) et mes mises en stock (magasinier)' })
+  @ApiQuery({ name: 'period', required: false, enum: ['day', 'week', 'month', 'year', 'all'] })
+  getMyStats(@CurrentTenant('databaseName') db: string, @CurrentUser() user: any, @Query('period') period?: string) {
+    return this.analyticsService.getMyStats(db, user.userId, period || 'day');
   }
 
   @Get('reports')

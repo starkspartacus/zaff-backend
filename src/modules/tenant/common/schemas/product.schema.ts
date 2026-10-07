@@ -26,6 +26,12 @@ export class Product {
   @Prop({ type: Types.ObjectId, ref: 'Brand', default: null })
   brandId: Types.ObjectId;
 
+  @Prop({ default: null, trim: true })
+  model: string;
+
+  @Prop({ default: null, trim: true })
+  color: string;
+
   @Prop({ required: true, default: 0 })
   purchasePrice: number;
 

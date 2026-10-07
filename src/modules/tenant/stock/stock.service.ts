@@ -40,6 +40,11 @@ export class StockService {
 
     const product = await prodModel.findById(dto.productId);
     if (!product) throw new NotFoundException('Produit non trouvé.');
+    if (product.hasSerialNumbers) {
+      throw new BadRequestException(
+        `'${product.name}' est suivi par N° de série : utilisez la mise en stock par scan (ou la vente) pour modifier son stock.`,
+      );
+    }
 
     let stockChange = 0;
     if (dto.movementType === StockMovementType.IN) {
