@@ -22,6 +22,8 @@
     "vapid:generate": "web-push generate-vapid-keys",
     "prestart:dev": "node scripts/check-deps.js",
     "prestart": "node scripts/check-deps.js",
+    "prebuild": "node scripts/check-deps.js",
+    "predev:memory": "node scripts/check-deps.js",
     "dev:memory": "ts-node test/memory-server.ts"
   },
   "dependencies": {
