@@ -8,22 +8,27 @@ const eq = (a: any, b: any) => String(a) === String(b);
 
 const matches = (doc: any, query: any = {}): boolean =>
   Object.entries(query).every(([key, cond]) => {
+    if (key === '$or') return (cond as any[]).some((q) => matches(doc, q));
     const value = doc[key];
     if (cond && typeof cond === 'object' && !(cond instanceof Types.ObjectId) && !(cond instanceof Date)) {
       return Object.entries(cond).every(([op, arg]: [string, any]) => {
         if (op === '$gte') return value >= arg;
+        if (op === '$lte') return value <= arg;
         if (op === '$in') return arg.some((x: any) => eq(x, value));
         if (op === '$ne') return !eq(value, arg);
         if (op === '$nin') return !arg.some((x: any) => eq(x, value));
         throw new Error(`Opérateur non supporté par FakeModel : ${op}`);
       });
     }
+    if (cond === null) return value === null || value === undefined;
     return value === cond || (value != null && cond != null && eq(value, cond));
   });
 
 const applyUpdate = (doc: any, update: any) => {
   for (const [key, val] of Object.entries(update)) {
     if (key === '$inc') Object.entries(val as any).forEach(([k, n]) => (doc[k] = (doc[k] || 0) + (n as number)));
+    else if (key === '$set') Object.assign(doc, val);
+    else if (key === '$addToSet') Object.entries(val as any).forEach(([k, v]) => (doc[k] = [...new Set([...(doc[k] || []), v])]));
     else doc[key] = val;
   }
 };
@@ -94,11 +99,70 @@ export class FakeModel {
       return i >= 0 ? this.docs.splice(i, 1)[0] : null;
     });
   }
-  async updateOne(q: any, update: any) {
+  async updateOne(q: any, update: any, opts: { upsert?: boolean } = {}) {
     const doc = this.docs.find((d) => matches(d, q));
     if (doc) applyUpdate(doc, update);
+    else if (opts.upsert) {
+      const fresh: any = { ...q };
+      applyUpdate(fresh, update);
+      await this.create(fresh);
+      return { modifiedCount: 0, upsertedCount: 1 };
+    }
     return { modifiedCount: doc ? 1 : 0 };
   }
+  async deleteOne(q: any) {
+    const i = this.docs.findIndex((d) => matches(d, q));
+    if (i >= 0) this.docs.splice(i, 1);
+    return { deletedCount: i >= 0 ? 1 : 0 };
+  }
+  async deleteMany(q: any) {
+    const before = this.docs.length;
+    this.docs = this.docs.filter((d) => !matches(d, q));
+    return { deletedCount: before - this.docs.length };
+  }
+  /** Agrégation minimale : $match, $group ($sum, $min, $max, $first, $size), $sort */
+  async aggregate(pipeline: any[]) {
+    let rows: any[] = [...this.docs];
+    const val = (doc: any, expr: any): any => {
+      if (typeof expr === 'string' && expr.startsWith('$')) return expr.slice(1).split('.').reduce((o, k) => o?.[k], doc);
+      if (expr && typeof expr === 'object' && '$size' in expr) return (val(doc, expr.$size) || []).length;
+      if (expr && typeof expr === 'object' && !(expr instanceof Types.ObjectId)) {
+        return Object.fromEntries(Object.entries(expr).map(([k, e]) => [k, val(doc, e)]));
+      }
+      return expr;
+    };
+    for (const stage of pipeline) {
+      if (stage.$match) rows = rows.filter((d) => matches(d, stage.$match));
+      else if (stage.$group) {
+        const { _id, ...acc } = stage.$group;
+        const groups = new Map<string, any>();
+        for (const d of rows) {
+          const id = val(d, _id);
+          const key = JSON.stringify(id);
+          const g = groups.get(key) || { _id: id };
+          for (const [field, spec] of Object.entries(acc) as [string, any][]) {
+            const [op, expr] = Object.entries(spec)[0] as [string, any];
+            const v = val(d, expr);
+            if (op === '$sum') g[field] = (g[field] || 0) + (typeof v === 'number' ? v : 0);
+            else if (op === '$first') g[field] ??= v;
+            else if (op === '$min') g[field] = g[field] === undefined || v < g[field] ? v : g[field];
+            else if (op === '$max') g[field] = g[field] === undefined || v > g[field] ? v : g[field];
+            else throw new Error(`Accumulateur non supporté : ${op}`);
+          }
+          groups.set(key, g);
+        }
+        rows = [...groups.values()];
+      } else if (stage.$sort) {
+        const [[k, dir]] = Object.entries(stage.$sort) as [string, number][];
+        rows.sort((a, b) => (a[k] > b[k] ? dir : a[k] < b[k] ? -dir : 0));
+      } else if (stage.$unwind) {
+        const path = stage.$unwind.slice(1);
+        rows = rows.flatMap((d) => (d[path] || []).map((x: any) => ({ ...d, [path]: x })));
+      } else throw new Error(`Étape non supportée : ${Object.keys(stage)[0]}`);
+    }
+    return rows;
+  }
+
   async updateMany(q: any, update: any) {
     const docs = this.docs.filter((d) => matches(d, q));
     docs.forEach((d) => applyUpdate(d, update));

@@ -12,6 +12,7 @@ import { StockMovementType, StockReferenceType } from '../../../common/enums/sto
 import { UnitStatus } from '../../../common/enums/unit-status.enum';
 import { CreateSaleDto, ReturnSaleDto } from './dto/create-sale.dto';
 import { NotificationsService } from '../notifications/notifications.service';
+import { paymentLabel } from '../../../common/enums/payment-labels';
 
 export interface Actor {
   userId: string;
@@ -229,7 +230,7 @@ export class SalesService {
     await this.notifications.notify(db, {
       type: 'sale.created',
       title: 'Nouvelle vente',
-      message: `${seller?.name || 'Caisse'} a vendu ${items.join(', ')}`,
+      message: `${seller?.name || 'Caisse'} a vendu ${items.join(', ')} · ${paymentLabel(sale.paymentMethod)}`,
       level: 'success',
       roles: ['admin'],
       actorId: seller?.userId,

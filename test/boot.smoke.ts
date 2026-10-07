@@ -35,7 +35,7 @@ const fakeConnection: any = {
   const routes = (app.getHttpAdapter().getInstance() as any)._router.stack
     .filter((l: any) => l.route)
     .map((l: any) => `${Object.keys(l.route.methods)[0].toUpperCase()} ${l.route.path}`);
-  console.log('ROUTES', routes.length, routes.filter((r: string) => /units|notifications|reference|realtime/.test(r)).join(' | '));
+  console.log('ROUTES', routes.length, routes.filter((r: string) => /cash-closings|push/.test(r)).join(' | '));
 
   const unauth = await fetch(`http://127.0.0.1:${port}/api/global/establishments`);
   console.log('GET /global/establishments sans jeton ->', unauth.status);

@@ -10,6 +10,10 @@ export interface EnvVars {
   GLOBAL_DATABASE_NAME: string;
   JWT_SECRET: string;
   JWT_EXPIRES_IN: string;
+  /** Notifications push (facultatif : sans ces clés, le push est simplement désactivé) */
+  VAPID_PUBLIC_KEY: string | null;
+  VAPID_PRIVATE_KEY: string | null;
+  VAPID_SUBJECT: string;
 }
 
 const MIN_SECRET_LENGTH = 32;
@@ -28,6 +32,14 @@ export function validateEnv(raw: Record<string, unknown>): EnvVars {
   else if (nodeEnv === 'production' && jwtSecret.length < MIN_SECRET_LENGTH) {
     errors.push(`JWT_SECRET doit faire au moins ${MIN_SECRET_LENGTH} caractères en production.`);
   }
+
+  const vapidPublic = get('VAPID_PUBLIC_KEY');
+  const vapidPrivate = get('VAPID_PRIVATE_KEY');
+  if (!!vapidPublic !== !!vapidPrivate) {
+    errors.push('VAPID_PUBLIC_KEY et VAPID_PRIVATE_KEY vont ensemble (générer : npm run vapid:generate).');
+  }
+  const vapidSubject = get('VAPID_SUBJECT') || 'mailto:contact@zaff.app';
+  if (vapidPublic && !/^(mailto:|https:\/\/)/.test(vapidSubject)) errors.push('VAPID_SUBJECT doit être un mailto: ou une URL https://');
 
   const port = Number(get('PORT') || 8000);
   if (!Number.isInteger(port) || port <= 0) errors.push('PORT doit être un nombre entier positif.');
@@ -49,5 +61,8 @@ export function validateEnv(raw: Record<string, unknown>): EnvVars {
     GLOBAL_DATABASE_NAME: get('GLOBAL_DATABASE_NAME') || 'zaff_global',
     JWT_SECRET: jwtSecret,
     JWT_EXPIRES_IN: get('JWT_EXPIRES_IN') || '7d',
+    VAPID_PUBLIC_KEY: vapidPublic || null,
+    VAPID_PRIVATE_KEY: vapidPrivate || null,
+    VAPID_SUBJECT: vapidSubject,
   };
 }

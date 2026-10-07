@@ -14,5 +14,10 @@ export default () => {
       secret: env.JWT_SECRET,
       expiresIn: env.JWT_EXPIRES_IN,
     },
+    push: {
+      publicKey: env.VAPID_PUBLIC_KEY,
+      privateKey: env.VAPID_PRIVATE_KEY,
+      subject: env.VAPID_SUBJECT,
+    },
   };
 };

@@ -25,6 +25,10 @@ export class Notification {
   @Prop({ type: [String], default: ['admin'], index: true })
   roles: string[];
 
+  /** Destinataires nominatifs (en plus des rôles) */
+  @Prop({ type: [Types.ObjectId], default: [], index: true })
+  userIds: Types.ObjectId[];
+
   @Prop({ type: Object, default: {} })
   data: Record<string, any>;
 

@@ -19,7 +19,7 @@ Priorité absolue : une expérience simple et compréhensible (UI et messages d'
 
 **Une base par boutique** `zaff_tenant_<slug>` (via `TenantConnectionService.getModel(db, name, schema)`) :
 users, products, product_units, sales, sale_returns, stock_movements, customers, suppliers, purchase_orders,
-repairs, warranties, categories, brands, notifications.
+repairs, warranties, categories, brands, notifications, push_subscriptions, cash_closings.
 Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenant('databaseName')` aux services.
 
 ## Rôles (`common/enums/role.enum.ts`)
@@ -39,6 +39,16 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   avec rollback de tout ce qui a été fait si une ligne échoue. Ne jamais remplacer par un « lire puis écrire ».
 - Un code scanné est résolu par `GET /units/lookup/:code` : N° de série d'une unité, sinon code-barres d'un modèle.
 
+## Clôture de caisse (`/cash-closings`)
+- Chaque vente porte `sellerId` et `closingId` (null tant qu'elle n'est pas clôturée).
+- `GET /cash-closings/current` : ma caisse en cours (totaux par mode de paiement calculés par le serveur).
+- `POST /cash-closings { declaredCash, notes }` : rattache **en une seule écriture** toutes mes ventes non clôturées
+  (`updateMany closingId: null → id`) puis calcule les totaux sur ce lot : une vente n'est jamais comptée deux fois,
+  une vente faite pendant la clôture part dans la suivante, deux clôtures simultanées sont impossibles.
+  Écart = espèces comptées − espèces attendues (négatif = il manque de l'argent).
+- `GET /cash-closings/open` (propriétaire) : caisses encore ouvertes par vendeur. `PATCH /:id/validate` : réception confirmée.
+- Notifications : `cash.closed` (→ admin, `warning` s'il y a un écart), `cash.validated` (→ le vendeur concerné via `userIds`).
+
 ## Temps réel (Socket.IO, namespace `/realtime`)
 - Auth : `handshake.auth.token` = JWT de l'utilisateur. Salons : `t:<db>`, `t:<db>:r:<rôle>`, `u:<userId>`.
 - Événements serveur → client :
@@ -47,7 +57,16 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   - `presence` : liste des collaborateurs connectés (envoyée au propriétaire). `presence:get` (ack) pour la demander.
 - Émettre depuis les services via `NotificationsService.notify()` / `.invalidate()` (jamais de socket dans le métier).
 - Contrôleurs CRUD : décorateur `@Invalidates('products', …)` → `InvalidateInterceptor` diffuse après succès.
-- Types d'événements actuels : `sale.created` (→ admin), `units.added` (→ admin), `stock.low` (→ admin, storekeeper).
+- Types d'événements actuels : `sale.created` (→ admin, avec le mode de paiement), `units.added` (→ admin),
+  `stock.low` (→ admin, storekeeper), `cash.closed` (→ admin), `cash.validated` (→ vendeur).
+- Une notification vise des rôles (`roles`) et/ou des personnes (`userIds`, salon `u:<userId>`).
+
+## Notifications push (Web Push, `PushService`)
+- Chaque `notify()` est aussi envoyé en push (en arrière-plan) aux appareils abonnés des destinataires : le patron
+  est prévenu même application fermée. Abonnements par appareil dans `push_subscriptions` (supprimés si expirés 404/410).
+- Clés VAPID **dans l'environnement** (`VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY`, `VAPID_SUBJECT`), générées par
+  `npm run vapid:generate` ; sans elles le push est désactivé (le reste fonctionne). La clé publique est servie par
+  `GET /notifications/push/config`.
 - Présence en mémoire : une seule instance. Pour plusieurs instances, ajouter l'adaptateur Redis de Socket.IO.
 
 ## Conventions

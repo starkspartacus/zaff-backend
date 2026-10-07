@@ -85,6 +85,10 @@ export class Sale {
 
   @Prop({ default: null })
   sellerName: string;
+
+  /** Clôture de caisse qui inclut cette vente (null = pas encore clôturée) */
+  @Prop({ type: Types.ObjectId, default: null, index: true })
+  closingId: Types.ObjectId;
 }
 
 export const SaleSchema = SchemaFactory.createForClass(Sale);

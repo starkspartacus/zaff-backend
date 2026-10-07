@@ -24,6 +24,14 @@ describe('validateEnv', () => {
       GLOBAL_DATABASE_NAME: 'zaff_global',
       JWT_SECRET: 'dev-secret',
       JWT_EXPIRES_IN: '7d',
+      VAPID_PUBLIC_KEY: null,
+      VAPID_PRIVATE_KEY: null,
+      VAPID_SUBJECT: 'mailto:contact@zaff.app',
     });
+  });
+
+  it('les clés VAPID (push) sont facultatives mais vont par paire', () => {
+    expect(() => validateEnv({ ...valid, VAPID_PUBLIC_KEY: 'pub' })).toThrow('vont ensemble');
+    expect(validateEnv({ ...valid, VAPID_PUBLIC_KEY: 'pub', VAPID_PRIVATE_KEY: 'priv' }).VAPID_PUBLIC_KEY).toBe('pub');
   });
 });

@@ -18,6 +18,7 @@ import { RepairsModule } from './modules/tenant/repairs/repairs.module';
 import { WarrantiesModule } from './modules/tenant/warranties/warranties.module';
 import { AnalyticsModule } from './modules/tenant/analytics/analytics.module';
 import { UnitsModule } from './modules/tenant/units/units.module';
+import { CashClosingsModule } from './modules/tenant/cash-closings/cash-closings.module';
 
 @Module({
   imports: [
@@ -42,6 +43,7 @@ import { UnitsModule } from './modules/tenant/units/units.module';
     WarrantiesModule,
     AnalyticsModule,
     UnitsModule,
+    CashClosingsModule,
   ],
 })
 export class AppModule {}

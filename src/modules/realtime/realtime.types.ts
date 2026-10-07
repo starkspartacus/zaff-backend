@@ -1,5 +1,16 @@
 /** Données rafraîchies côté client quand elles changent (clés React Query) */
-export type DataScope = 'sales' | 'units' | 'products' | 'stock' | 'dashboard' | 'my-stats' | 'customers' | 'repairs' | 'suppliers' | 'users';
+export type DataScope =
+  | 'sales'
+  | 'units'
+  | 'products'
+  | 'stock'
+  | 'dashboard'
+  | 'my-stats'
+  | 'customers'
+  | 'repairs'
+  | 'suppliers'
+  | 'users'
+  | 'cash-closings';
 
 export interface SocketUser {
   userId: string;

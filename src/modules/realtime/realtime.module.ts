@@ -7,6 +7,7 @@ import { EstablishmentsModule } from '../global/establishments/establishments.mo
 import { RealtimeGateway } from './realtime.gateway';
 import { RealtimeService } from './realtime.service';
 import { NotificationsService } from '../tenant/notifications/notifications.service';
+import { PushService } from '../tenant/notifications/push.service';
 import { NotificationsController } from '../tenant/notifications/notifications.controller';
 
 /** Temps réel + notifications, disponibles dans tous les modules */
@@ -21,7 +22,7 @@ import { NotificationsController } from '../tenant/notifications/notifications.c
     }),
   ],
   controllers: [NotificationsController],
-  providers: [RealtimeGateway, RealtimeService, NotificationsService, { provide: APP_INTERCEPTOR, useClass: InvalidateInterceptor }],
+  providers: [RealtimeGateway, RealtimeService, NotificationsService, PushService, { provide: APP_INTERCEPTOR, useClass: InvalidateInterceptor }],
   exports: [RealtimeService, NotificationsService],
 })
 export class RealtimeModule {}
