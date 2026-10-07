@@ -1,7 +1,7 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, Param, Post, Query, Res, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { IsOptional, IsString, MaxLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 import type { Response } from 'express';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
@@ -23,6 +23,8 @@ class ImageUploadDto {
   @IsString() @MaxLength(120) model: string;
   @IsOptional() @IsString() @MaxLength(60) color?: string;
   @IsOptional() @IsString() @MaxLength(60) category?: string;
+  /** « true » : import dans la photothèque (propriétaire seulement) */
+  @IsOptional() @IsIn(['true', 'false']) library?: string;
 }
 
 @ApiTags('Global - Images produits (partagées)')
@@ -41,16 +43,33 @@ export class ImagesController {
     return this.images.search(q);
   }
 
-  /** Fichier image : public (balise <img> sans jeton), mis en cache longtemps (contenu immuable) */
+  /** Photothèque de ma boutique (import en masse, suppression) */
+  @Get('mine')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN)
+  @ApiOperation({ summary: 'Photos ajoutées par ma boutique (photothèque)' })
+  mine(@CurrentUser() user: any) {
+    return this.images.mine(user?.tenantId);
+  }
+
+  /**
+   * Fichier image : public (balise <img> sans jeton). Chez UploadThing : redirection vers le fichier
+   * (servi par leur CDN) ; sinon servi depuis MongoDB. Contenu immuable : cache long.
+   */
   @Get(':id/file')
   @ApiOperation({ summary: 'Fichier de la photo' })
   async file(@Param('id') id: string, @Res() res: Response) {
     const img = await this.images.file(id);
+    if (img.url) {
+      res.setHeader('Cache-Control', 'public, max-age=86400');
+      return res.redirect(302, img.url);
+    }
     res.setHeader('Content-Type', img.mime);
     res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
     res.setHeader('ETag', `"${img.sha256}"`);
     res.setHeader('X-Content-Type-Options', 'nosniff');
-    res.end(Buffer.from(img.data));
+    res.end(Buffer.from(img.data || []));
   }
 
   @Post()
@@ -59,17 +78,29 @@ export class ImagesController {
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN, Role.STOREKEEPER)
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_IMAGE_BYTES, files: 1 } }))
-  @ApiOperation({ summary: 'Ajouter une photo à la base partagée (redimensionnée par le navigateur)' })
+  @ApiOperation({ summary: "Envoyer une photo (au moment d'enregistrer le produit, ou import en masse dans la photothèque)" })
   async upload(@UploadedFile() file: { buffer: Buffer; size: number } | undefined, @Body() dto: ImageUploadDto, @CurrentUser() user: any) {
+    const library = dto.library === 'true';
+    if (library && user?.role !== Role.ADMIN) throw new ForbiddenException("Seul le propriétaire peut importer des photos dans la photothèque.");
     const est = user?.tenantId ? await this.establishments.findById(user.tenantId).catch(() => null) : null;
-    return this.images.upload(file, dto, { establishmentId: user?.tenantId, establishmentName: est?.name, name: user?.name });
+    return this.images.upload(file, dto, { establishmentId: user?.tenantId, establishmentName: est?.name, name: user?.name }, { library });
+  }
+
+  /** Annule une photo envoyée pour un produit dont l'enregistrement a échoué (évite les fichiers orphelins) */
+  @Delete(':id/pending')
+  @ApiBearerAuth()
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.STOREKEEPER)
+  @ApiOperation({ summary: "Annuler une photo envoyée mais pas utilisée" })
+  discard(@Param('id') id: string, @CurrentUser() user: any) {
+    return this.images.discard(id, user?.tenantId);
   }
 
   @Delete(':id')
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard, RolesGuard)
   @Roles(Role.ADMIN)
-  @ApiOperation({ summary: 'Retirer une photo ajoutée par ma boutique' })
+  @ApiOperation({ summary: 'Retirer de la photothèque une photo ajoutée par ma boutique (si aucun produit ne l\'utilise)' })
   remove(@Param('id') id: string, @CurrentUser() user: any) {
     return this.images.remove(id, user?.tenantId);
   }

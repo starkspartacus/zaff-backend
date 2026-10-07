@@ -107,13 +107,29 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   Tecno, Infinix, Itel, Redmi, HP, Dell, Lenovo, MacBook…, avec capacités et coloris officiels quand connus).
   Simples suggestions : le frontend les complète avec les produits de la boutique, et toute valeur peut être tapée.
 
-## Images produits partagées (`/global/images`)
-- `GET /global/images?brand&model&color&category` (connecté) : photos du modèle, toutes boutiques confondues, la couleur
-  demandée d'abord puis les plus utilisées. `GET /global/images/:id/file` : **public** (balise `<img>`), cache 1 an immuable.
-- `POST /global/images` (multipart `file` + brand, model, color?, category? ; propriétaire / magasinier) : le navigateur
-  réduit la photo (≤ 1000 px) ; le serveur vérifie le **vrai type par les premiers octets** (JPEG / PNG / WebP, pas de
-  SVG), 600 Ko max, et ne stocke qu'une fois une même photo. `DELETE /global/images/:id` : seule la boutique qui l'a ajoutée.
-- `Product.imageId` : photo choisie ; la création / modification d'un produit met à jour le compteur `usage`.
+## Images produits partagées (`/global/images`) — UploadThing, sans fichier orphelin
+- **Stockage** (`media-storage.ts`, jeton `MEDIA_STORAGE`) : **UploadThing** si `UPLOADTHING_TOKEN` est défini (envoi
+  côté serveur avec `UTApi`, après nos vérifications ; `customId` = `zaff-<sha256>`), sinon dans MongoDB (développement,
+  `dev:memory`). La fiche garde `storage`, `storageKey`, `url`.
+- `GET /global/images?brand&model&color&category` (connecté) : photos du modèle, toutes boutiques, la couleur demandée
+  d'abord puis les plus utilisées ; jamais les photos encore « en attente ». Clé du modèle **sans la marque en tête**
+  (`modelKeyOf` : « Samsung Galaxy A55 » = « Galaxy A55 »). `GET /global/images/:id/file` : **public** (balise `<img>`) —
+  redirection vers le CDN UploadThing, ou fichier servi depuis MongoDB (cache 1 an).
+- `POST /global/images` (multipart `file` + brand, model, color?, category?, library? ; propriétaire / magasinier) : vrai
+  type vérifié par les premiers octets (JPEG / PNG / WebP, pas de SVG), 600 Ko max, une même photo stockée une fois.
+  Si la fiche ne peut pas être créée après l'envoi, le fichier UploadThing est supprimé.
+- **Cycle de vie (aucune photo orpheline)** :
+  - le navigateur n'envoie la photo qu'au clic sur « Enregistrer » ; elle est créée `pending: true` ;
+  - enregistrer le produit la rattache (`attach` : `usage + 1`, `pending: false`) ; photo inexistante → 400 ;
+  - produit modifié avec une autre photo, photo retirée, produit supprimé → `release` de l'ancienne : si plus aucun produit
+    ne l'utilise et qu'elle n'est pas en photothèque, **effacée chez UploadThing et dans la base** ;
+  - enregistrement du produit en échec → `DELETE /global/images/:id/pending` (même boutique, encore en attente) ;
+  - **filet de sécurité toutes les heures** (`cleanup`) : photos en attente depuis plus d'1 h supprimées, et fichiers
+    `zaff-…` présents chez UploadThing sans fiche supprimés (les autres fichiers du compte ne sont jamais touchés).
+- **Photothèque** (`library: true`, propriétaire, `library=true` à l'envoi) : import en masse, photos gardées même sans
+  produit. `GET /global/images/mine` : photos de ma boutique. `DELETE /global/images/:id` : seulement la boutique qui l'a
+  ajoutée, et refusé tant qu'un produit l'utilise.
+- `Product.imageId` : photo choisie (rattachée / libérée par `CatalogService`).
 
 ## Clôture de caisse (`/cash-closings`)
 - Chaque vente porte `sellerId` et `closingId` (null tant qu'elle n'est pas clôturée).
@@ -154,7 +170,8 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 - **Aucun secret dans le code.** Configuration lue uniquement depuis l'environnement et validée au démarrage
   (`src/config/env.validation.ts`) : `MONGODB_URI` et `JWT_SECRET` obligatoires (JWT ≥ 32 caractères en
   production), sinon l'app refuse de démarrer. En local : copier `.env.example` en `.env` (ignoré par git).
-  Lire la config avec `getOrThrow`, jamais de valeur de repli pour un secret.
+  Lire la config avec `getOrThrow`, jamais de valeur de repli pour un secret. `UPLOADTHING_TOKEN` (facultatif) : stockage
+  des photos chez UploadThing (Dashboard > API Keys > V7) ; sans lui, photos dans MongoDB.
 - ⚠️ Un ancien mot de passe MongoDB et un ancien secret JWT figurent dans l'historique git (avant cette règle) :
   à changer dans Atlas et à régénérer avant la mise en production.
 

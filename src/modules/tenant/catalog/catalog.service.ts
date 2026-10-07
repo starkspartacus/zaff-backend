@@ -79,9 +79,14 @@ export class CatalogService {
     await this.assertBarcodeFree(db, dto.barcode);
     // Produit à N° de série : le stock part de 0 et ne monte qu'en scannant des unités
     const stockQuantity = dto.hasSerialNumbers ? 0 : dto.stockQuantity || 0;
-    const created = await model.create({ ...dto, sku, barcode: dto.barcode?.trim() || null, stockQuantity });
-    await this.images?.used(dto.imageId);
-    return created;
+    // La photo est rattachée au produit (elle n'est plus « en attente ») ; si le produit échoue, elle est libérée
+    await this.images?.attach(dto.imageId);
+    try {
+      return await model.create({ ...dto, sku, barcode: dto.barcode?.trim() || null, stockQuantity });
+    } catch (e) {
+      await this.images?.release(dto.imageId);
+      throw e;
+    }
   }
 
   async updateProduct(db: string, id: string, dto: Partial<CreateProductDto>) {
@@ -106,11 +111,18 @@ export class CatalogService {
     if (willBeSerial) delete update.stockQuantity;
     if (dto.sku) update.sku = dto.sku.trim().toUpperCase();
 
-    const saved = await model.findByIdAndUpdate(id, update, { new: true }).exec();
-    if (dto.imageId !== undefined && String(dto.imageId) !== String(product.imageId)) {
-      await this.images?.used(product.imageId, -1);
-      await this.images?.used(dto.imageId);
+    // Nouvelle photo : rattachée avant l'enregistrement ; l'ancienne est libérée après (et effacée si plus utilisée)
+    const previousImage = product.imageId ?? null;
+    const imageChanged = dto.imageId !== undefined && String(dto.imageId ?? '') !== String(previousImage ?? '');
+    if (imageChanged) await this.images?.attach(dto.imageId);
+    let saved;
+    try {
+      saved = await model.findByIdAndUpdate(id, update, { new: true }).exec();
+    } catch (e) {
+      if (imageChanged) await this.images?.release(dto.imageId);
+      throw e;
     }
+    if (imageChanged) await this.images?.release(previousImage);
     return saved;
   }
 
@@ -119,8 +131,10 @@ export class CatalogService {
     if (await this.getUnitModel(db).exists({ productId: id })) {
       throw new BadRequestException('Ce produit a des unités enregistrées (N° de série) : il ne peut pas être supprimé.');
     }
-    const res = await model.findByIdAndDelete(id).exec();
+    const res: any = await model.findByIdAndDelete(id).exec();
     if (!res) throw new NotFoundException('Produit non trouvé.');
+    // Sa photo est libérée (effacée chez UploadThing si plus aucun produit ne l'utilise)
+    await this.images?.release(res.imageId);
     return { message: 'Produit supprimé avec succès.' };
   }
 

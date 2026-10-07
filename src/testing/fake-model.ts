@@ -14,6 +14,8 @@ const matches = (doc: any, query: any = {}): boolean =>
       return Object.entries(cond).every(([op, arg]: [string, any]) => {
         if (op === '$gte') return value >= arg;
         if (op === '$lte') return value <= arg;
+        if (op === '$lt') return value < arg;
+        if (op === '$gt') return value > arg;
         if (op === '$in') return arg.some((x: any) => eq(x, value));
         if (op === '$ne') return !eq(value, arg);
         if (op === '$nin') return !arg.some((x: any) => eq(x, value));

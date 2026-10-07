@@ -27,11 +27,21 @@ describe('validateEnv', () => {
       VAPID_PUBLIC_KEY: null,
       VAPID_PRIVATE_KEY: null,
       VAPID_SUBJECT: 'mailto:contact@zaff.app',
+      UPLOADTHING_TOKEN: null,
     });
   });
 
   it('les clés VAPID (push) sont facultatives mais vont par paire', () => {
     expect(() => validateEnv({ ...valid, VAPID_PUBLIC_KEY: 'pub' })).toThrow('vont ensemble');
     expect(validateEnv({ ...valid, VAPID_PUBLIC_KEY: 'pub', VAPID_PRIVATE_KEY: 'priv' }).VAPID_PUBLIC_KEY).toBe('pub');
+  });
+});
+
+describe('validateEnv — UploadThing', () => {
+  const base = { MONGODB_URI: 'mongodb://localhost', JWT_SECRET: 'dev-secret' };
+  it('jeton facultatif, refusé s\'il est manifestement incomplet', () => {
+    expect(validateEnv(base).UPLOADTHING_TOKEN).toBeNull();
+    expect(validateEnv({ ...base, UPLOADTHING_TOKEN: 'eyJhcGlLZXkiOiJza19saXZlX2FiY2RlZmdoaWprbG1ub3AifQ' }).UPLOADTHING_TOKEN).toMatch(/^eyJ/);
+    expect(() => validateEnv({ ...base, UPLOADTHING_TOKEN: 'abc' })).toThrow(/UPLOADTHING_TOKEN/);
   });
 });

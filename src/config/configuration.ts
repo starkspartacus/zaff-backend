@@ -14,6 +14,9 @@ export default () => {
       secret: env.JWT_SECRET,
       expiresIn: env.JWT_EXPIRES_IN,
     },
+    media: {
+      uploadthingToken: env.UPLOADTHING_TOKEN,
+    },
     push: {
       publicKey: env.VAPID_PUBLIC_KEY,
       privateKey: env.VAPID_PRIVATE_KEY,

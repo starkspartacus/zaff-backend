@@ -35,8 +35,32 @@ export class CatalogImage {
   @Prop({ required: true })
   mime: string;
 
-  @Prop({ type: Buffer, required: true, select: false })
+  /** Fichier gardé dans MongoDB (seulement sans UploadThing) */
+  @Prop({ type: Buffer, default: null, select: false })
   data: Buffer;
+
+  /** Stockage du fichier : UploadThing (production) ou MongoDB (développement) */
+  @Prop({ enum: ['uploadthing', 'database'], default: 'database' })
+  storage: 'uploadthing' | 'database';
+
+  /** Clé du fichier chez UploadThing (pour le supprimer) */
+  @Prop({ default: null })
+  storageKey: string;
+
+  /** Adresse publique directe (UploadThing) */
+  @Prop({ default: null })
+  url: string;
+
+  /**
+   * Photothèque : importée exprès (import en masse) et gardée même si aucun produit ne l'utilise.
+   * Les autres photos sont supprimées (fichier + fiche) dès que plus aucun produit ne les utilise.
+   */
+  @Prop({ default: false, index: true })
+  library: boolean;
+
+  /** Envoyée mais pas encore rattachée à un produit enregistré (supprimée au bout d'une heure sinon) */
+  @Prop({ default: true, index: true })
+  pending: boolean;
 
   @Prop({ required: true })
   bytes: number;
@@ -61,3 +85,4 @@ export class CatalogImage {
 
 export const CatalogImageSchema = SchemaFactory.createForClass(CatalogImage);
 CatalogImageSchema.index({ brandKey: 1, modelKey: 1 });
+CatalogImageSchema.index({ pending: 1, createdAt: 1 });

@@ -14,6 +14,8 @@ export interface EnvVars {
   VAPID_PUBLIC_KEY: string | null;
   VAPID_PRIVATE_KEY: string | null;
   VAPID_SUBJECT: string;
+  /** Stockage des photos / vidéos sur UploadThing (facultatif : sans jeton, stockage dans MongoDB) */
+  UPLOADTHING_TOKEN: string | null;
 }
 
 const MIN_SECRET_LENGTH = 32;
@@ -41,6 +43,9 @@ export function validateEnv(raw: Record<string, unknown>): EnvVars {
   const vapidSubject = get('VAPID_SUBJECT') || 'mailto:contact@zaff.app';
   if (vapidPublic && !/^(mailto:|https:\/\/)/.test(vapidSubject)) errors.push('VAPID_SUBJECT doit être un mailto: ou une URL https://');
 
+  const uploadthingToken = get('UPLOADTHING_TOKEN');
+  if (uploadthingToken && uploadthingToken.length < 20) errors.push('UPLOADTHING_TOKEN semble incomplet (Dashboard UploadThing > API Keys > V7).');
+
   const port = Number(get('PORT') || 8000);
   if (!Number.isInteger(port) || port <= 0) errors.push('PORT doit être un nombre entier positif.');
 
@@ -64,5 +69,6 @@ export function validateEnv(raw: Record<string, unknown>): EnvVars {
     VAPID_PUBLIC_KEY: vapidPublic || null,
     VAPID_PRIVATE_KEY: vapidPrivate || null,
     VAPID_SUBJECT: vapidSubject,
+    UPLOADTHING_TOKEN: uploadthingToken || null,
   };
 }
