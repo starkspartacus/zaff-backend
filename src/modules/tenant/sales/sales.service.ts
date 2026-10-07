@@ -252,7 +252,7 @@ export class SalesService {
         data: { productId: String(p._id), stockQuantity: p.stockQuantity },
       });
     }
-    this.notifications.invalidate(db, ['sales', 'units', 'products', 'stock', 'dashboard', 'my-stats', 'customers']);
+    this.notifications.invalidate(db, ['sales', 'units', 'products', 'stock', 'dashboard', 'my-stats', 'customers', 'cash-closings']);
   }
 
   /** Message clair expliquant pourquoi une unité ne peut pas être vendue */
