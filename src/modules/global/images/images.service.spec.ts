@@ -166,4 +166,41 @@ describe("Photos partagées : UploadThing, sans fichier orphelin", () => {
     expect(f.url).toBeNull();
     expect(f.data?.length).toBe(204);
   });
+
+  it('vignette : stockée avec la photo, servie à part, effacée avec elle', async () => {
+    const thumb = { buffer: Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(50, 9)]), size: 54 };
+    const img = await images.upload(file(20), meta, shopA, { thumb });
+    expect(img.hasThumb).toBe(true);
+    expect(ut.files.size).toBe(2);
+    expect((await images.file(img.id, 'thumb')).url).toMatch(/vignette/);
+    expect((await images.file(img.id)).url).not.toMatch(/vignette/);
+    await images.discard(img.id, shopA.establishmentId);
+    expect(ut.files.size).toBe(0);
+    await expect(images.upload(file(21), meta, shopA, { thumb: { buffer: Buffer.from('pas une image'), size: 13 } })).rejects.toThrow(/Vignette invalide/);
+    // Sans vignette : la photo complète est servie
+    const local = new ImagesService(new FakeModel(['sha256']) as any);
+    const plain = await local.upload(file(22), meta, shopA);
+    expect((await local.file(plain.id, 'thumb')).data?.length).toBe(204);
+  });
+
+  it('signalement : 3 boutiques différentes masquent la photo de la base partagée, pas la sienne', async () => {
+    const img = await images.upload(file(23), meta, shopA, { library: true });
+    const shopC = new Types.ObjectId().toString();
+    const shopD = new Types.ObjectId().toString();
+    await expect(images.report(img.id, shopA.establishmentId)).rejects.toThrow(/votre boutique/);
+    expect(await images.report(img.id, shopB.establishmentId)).toEqual({ reported: true, hidden: false });
+    expect(await images.report(img.id, shopB.establishmentId)).toEqual({ reported: true, hidden: false }); // compté une fois
+    await images.report(img.id, shopC);
+    expect(await images.search(meta)).toHaveLength(1);
+    expect(await images.report(img.id, shopD)).toEqual({ reported: true, hidden: true });
+    expect(await images.search(meta)).toEqual([]);
+    expect((await images.mine(shopA.establishmentId))[0]).toMatchObject({ hidden: true, reports: 3 });
+  });
+
+  it('espace utilisé : base partagée, ma boutique, quota du fournisseur', async () => {
+    await images.upload(file(24), meta, shopA, { library: true });
+    await images.upload(file(25), meta, shopB, { library: true });
+    const u = await images.usage(shopA.establishmentId);
+    expect(u).toMatchObject({ storage: 'uploadthing', shared: { photos: 2, bytes: 408 }, mine: { photos: 1, bytes: 204, library: 1 } });
+  });
 });

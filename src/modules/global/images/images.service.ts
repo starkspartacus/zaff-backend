@@ -18,6 +18,9 @@ import { CatalogImage, CatalogImageDocument } from './schemas/catalog-image.sche
 import { CUSTOM_ID_PREFIX, DatabaseStorage, MEDIA_STORAGE, MediaStorage } from './media-storage';
 
 export const MAX_IMAGE_BYTES = 600 * 1024;
+export const MAX_THUMB_BYTES = 80 * 1024;
+/** Signalements de boutiques différentes avant de masquer une photo de la base partagée */
+export const REPORTS_TO_HIDE = 3;
 /** Une photo envoyée mais jamais rattachée à un produit est supprimée passé ce délai */
 export const PENDING_TTL_MS = 60 * 60 * 1000;
 
@@ -97,6 +100,9 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
       library: !!img.library,
       pending: !!img.pending,
       createdAt: img.createdAt,
+      hidden: !!img.hidden,
+      reports: (img.reports || []).length,
+      hasThumb: !!(img.thumbKey || img.thumbBytes),
       url: `/global/images/${img._id}/file`,
     };
   }
@@ -107,7 +113,7 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
     const modelKey = modelKeyOf(q.brand, q.model);
     if (!brandKey && !modelKey) return [];
     // Les photos en attente d'une autre boutique ne sont pas proposées (elles peuvent disparaître)
-    const filter: Record<string, unknown> = { pending: false };
+    const filter: Record<string, unknown> = { pending: false, hidden: { $ne: true } };
     if (brandKey) filter.brandKey = brandKey;
     if (modelKey) filter.modelKey = modelKey;
     else if (q.category) filter.category = q.category;
@@ -137,9 +143,11 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
     file: { buffer: Buffer; size: number } | undefined,
     meta: { brand: string; model: string; color?: string; category?: string },
     by: ImageUploader,
-    opts: { library?: boolean } = {},
+    opts: { library?: boolean; thumb?: { buffer: Buffer; size: number } } = {},
   ) {
     if (!file?.buffer?.length) throw new BadRequestException('Aucune photo reçue.');
+    const thumb = opts.thumb?.buffer?.length ? opts.thumb : null;
+    if (thumb && (thumb.size > MAX_THUMB_BYTES || !sniffImage(thumb.buffer))) throw new BadRequestException('Vignette invalide (80 Ko maximum, JPEG / PNG / WebP).');
     if (file.size > MAX_IMAGE_BYTES) throw new BadRequestException('Photo trop lourde (600 Ko maximum après réduction).');
     const mime = sniffImage(file.buffer);
     if (!mime) throw new BadRequestException('Format non reconnu : envoyez une photo JPEG, PNG ou WebP.');
@@ -153,12 +161,14 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
       return { ...this.view({ ...existing, library: existing.library || !!opts.library }), duplicate: true };
     }
 
-    const stored = await this.storage.put(file.buffer, {
-      name: `${imageKey(`${meta.brand} ${meta.model} ${meta.color || ''}`).replace(/ /g, '-')}.${EXT[mime]}`,
-      mime,
-      customId: `${CUSTOM_ID_PREFIX}${sha256}`,
-    });
+    const baseName = imageKey(`${meta.brand} ${meta.model} ${meta.color || ''}`).replace(/ /g, '-');
+    const stored = await this.storage.put(file.buffer, { name: `${baseName}.${EXT[mime]}`, mime, customId: `${CUSTOM_ID_PREFIX}${sha256}` });
+    let storedThumb: { key: string | null; url: string | null } = { key: null, url: null };
+    const thumbMime = thumb ? sniffImage(thumb.buffer)! : null;
     try {
+      if (thumb && thumbMime) {
+        storedThumb = await this.storage.put(thumb.buffer, { name: `${baseName}-vignette.${EXT[thumbMime]}`, mime: thumbMime, customId: `${CUSTOM_ID_PREFIX}${sha256}-t` });
+      }
       const created = await this.model.create({
         category: meta.category || null,
         brand: meta.brand.trim(),
@@ -173,6 +183,10 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
         storageKey: stored.key,
         url: stored.url,
         bytes: file.size,
+        thumbData: thumb && this.storage.name === 'database' ? thumb.buffer : null,
+        thumbKey: storedThumb.key,
+        thumbUrl: storedThumb.url,
+        thumbBytes: thumb?.size || 0,
         sha256,
         library: !!opts.library,
         pending: !opts.library,
@@ -183,16 +197,25 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
       return { ...this.view(created), duplicate: false };
     } catch (e) {
       // La fiche n'a pas pu être créée : on ne laisse pas le fichier seul chez UploadThing
-      if (stored.key) await this.storage.remove([stored.key]).catch(() => undefined);
+      const keys = [stored.key, storedThumb.key].filter((k): k is string => !!k);
+      if (keys.length) await this.storage.remove(keys).catch(() => undefined);
       throw e;
     }
   }
 
-  async file(id: string) {
+  /** Fichier (ou sa vignette s'il en a une) : `url` pour une redirection vers UploadThing, sinon `data` */
+  async file(id: string, size: 'full' | 'thumb' = 'full') {
     if (!Types.ObjectId.isValid(id)) throw new NotFoundException('Image introuvable.');
-    const img = await this.model.findById(id).select('+data mime sha256 url storage').lean().exec();
+    const img: any = await this.model.findById(id).select('+data +thumbData mime sha256 url storage thumbUrl thumbBytes').lean().exec();
     if (!img) throw new NotFoundException('Image introuvable.');
-    return img as unknown as { data: Buffer | null; mime: string; sha256: string; url: string | null; storage: string };
+    const useThumb = size === 'thumb' && !!(img.thumbUrl || img.thumbData);
+    const data: Buffer | null = useThumb ? img.thumbData : img.data;
+    return {
+      data,
+      url: (useThumb ? img.thumbUrl : img.url) as string | null,
+      mime: (data && sniffImage(Buffer.from(data))) || img.mime,
+      etag: `${img.sha256}${useThumb ? '-t' : ''}`,
+    };
   }
 
   /** Un produit enregistré utilise cette photo */
@@ -210,8 +233,9 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
     if (img && img.usage <= 0 && !img.library) await this.destroy(img);
   }
 
-  private async destroy(img: { _id: unknown; storageKey?: string | null }) {
-    if (img.storageKey) await this.storage.remove([img.storageKey]);
+  private async destroy(img: { _id: unknown; storageKey?: string | null; thumbKey?: string | null }) {
+    const keys = [img.storageKey, img.thumbKey].filter((k): k is string => !!k);
+    if (keys.length) await this.storage.remove(keys);
     await this.model.deleteOne({ _id: img._id });
   }
 
@@ -260,9 +284,9 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
       const files = await this.storage.list();
       const ours = files.filter((f) => f.customId?.startsWith(CUSTOM_ID_PREFIX) && f.uploadedAt < cutoff.getTime());
       if (ours.length) {
-        const known = new Set(
-          (await this.model.find({ storageKey: { $in: ours.map((f) => f.key) } }).lean().exec()).map((d) => d.storageKey),
-        );
+        const keys = ours.map((f) => f.key);
+        const docs = await this.model.find({ $or: [{ storageKey: { $in: keys } }, { thumbKey: { $in: keys } }] }).lean().exec();
+        const known = new Set(docs.flatMap((d) => [d.storageKey, d.thumbKey]));
         const orphans = ours.filter((f) => !known.has(f.key)).map((f) => f.key);
         if (orphans.length) await this.storage.remove(orphans);
         remote = orphans.length;
@@ -270,5 +294,38 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
     }
     if (pending || remote) this.logger.log(`Nettoyage : ${pending} photo(s) abandonnée(s), ${remote} fichier(s) orphelin(s) supprimé(s)`);
     return { pending, remote };
+  }
+
+  /**
+   * Signalement par une autre boutique (photo inadaptée, mauvais modèle…). Après 3 boutiques différentes,
+   * la photo n'est plus proposée dans la base partagée ; les produits qui l'utilisent la gardent.
+   */
+  async report(id: string, establishmentId: string) {
+    if (!Types.ObjectId.isValid(id) || !establishmentId || !Types.ObjectId.isValid(establishmentId)) throw new NotFoundException('Image introuvable.');
+    const img: any = await this.model.findById(id).lean().exec();
+    if (!img) throw new NotFoundException('Image introuvable.');
+    if (String(img.establishmentId) === String(establishmentId)) {
+      throw new BadRequestException('Cette photo vient de votre boutique : supprimez-la depuis la Photothèque.');
+    }
+    const updated: any = await this.model
+      .findOneAndUpdate({ _id: id }, { $addToSet: { reports: new Types.ObjectId(establishmentId) } }, { new: true })
+      .exec();
+    const count = new Set((updated?.reports || []).map(String)).size;
+    if (count >= REPORTS_TO_HIDE && !updated.hidden) await this.model.updateOne({ _id: id }, { $set: { hidden: true } });
+    return { reported: true, hidden: count >= REPORTS_TO_HIDE };
+  }
+
+  /** Espace utilisé : toute la base partagée, ma boutique, et le quota UploadThing s'il est connu */
+  async usage(establishmentId?: string | null) {
+    const docs: any[] = await this.model.find({}).select('bytes thumbBytes establishmentId library hidden').lean().exec();
+    const sum = (list: any[]) => list.reduce((t, d) => t + (d.bytes || 0) + (d.thumbBytes || 0), 0);
+    const mine = docs.filter((d) => establishmentId && String(d.establishmentId) === String(establishmentId));
+    const provider = this.storage.usage ? await this.storage.usage().catch(() => null) : null;
+    return {
+      storage: this.storage.name,
+      shared: { photos: docs.length, bytes: sum(docs), hidden: docs.filter((d) => d.hidden).length },
+      mine: { photos: mine.length, bytes: sum(mine), library: mine.filter((d) => d.library).length },
+      provider,
+    };
   }
 }

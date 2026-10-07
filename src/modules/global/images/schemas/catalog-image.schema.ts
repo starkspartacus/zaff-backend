@@ -58,6 +58,27 @@ export class CatalogImage {
   @Prop({ default: false, index: true })
   library: boolean;
 
+  /** Vignette légère (≈ 320 px) pour les cartes et listes : même stockage que la photo */
+  @Prop({ type: Buffer, default: null, select: false })
+  thumbData: Buffer;
+
+  @Prop({ default: null })
+  thumbKey: string;
+
+  @Prop({ default: null })
+  thumbUrl: string;
+
+  @Prop({ default: 0 })
+  thumbBytes: number;
+
+  /** Boutiques qui ont signalé la photo (inadaptée, mauvais modèle…) */
+  @Prop({ type: [Types.ObjectId], default: [] })
+  reports: Types.ObjectId[];
+
+  /** Masquée de la base partagée après 3 signalements de boutiques différentes */
+  @Prop({ default: false, index: true })
+  hidden: boolean;
+
   /** Envoyée mais pas encore rattachée à un produit enregistré (supprimée au bout d'une heure sinon) */
   @Prop({ default: true, index: true })
   pending: boolean;

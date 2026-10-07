@@ -42,7 +42,8 @@ const applyUpdate = (doc: any, update: any) => {
       }
     }
     else if (key === '$push') Object.entries(val as any).forEach(([k, v]) => (doc[k] = [...(doc[k] || []), v]));
-    else if (key === '$addToSet') Object.entries(val as any).forEach(([k, v]) => (doc[k] = [...new Set([...(doc[k] || []), v])]));
+    // Comme MongoDB : une valeur déjà présente (ObjectId compris, comparé par valeur) n'est pas ajoutée
+    else if (key === '$addToSet') Object.entries(val as any).forEach(([k, v]) => (doc[k] = (doc[k] || []).some((x: any) => eq(x, v)) ? doc[k] : [...(doc[k] || []), v]));
     else doc[key] = val;
   }
 };

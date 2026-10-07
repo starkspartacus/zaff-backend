@@ -21,6 +21,8 @@ export interface MediaStorage {
   remove(keys: string[]): Promise<void>;
   /** Fichiers présents chez le fournisseur (pour supprimer ceux qu'aucune fiche ne référence) */
   list?(): Promise<RemoteFile[]>;
+  /** Espace utilisé / quota chez le fournisseur */
+  usage?(): Promise<{ totalBytes: number; limitBytes: number; filesUploaded: number }>;
 }
 
 export const MEDIA_STORAGE = 'MEDIA_STORAGE';
@@ -41,6 +43,7 @@ export interface UploadThingClient {
   uploadFiles(file: UTFile): Promise<{ data: { key: string; ufsUrl: string } | null; error: { message: string } | null }>;
   deleteFiles(keys: string[]): Promise<{ success: boolean; deletedCount: number }>;
   listFiles(opts: { limit: number; offset: number }): Promise<{ files: readonly RemoteFile[]; hasMore: boolean }>;
+  getUsageInfo?(): Promise<{ totalBytes: number; appTotalBytes: number; filesUploaded: number; limitBytes: number }>;
 }
 
 export class UploadThingStorage implements MediaStorage {
@@ -66,6 +69,12 @@ export class UploadThingStorage implements MediaStorage {
   async remove(keys: string[]): Promise<void> {
     const list = keys.filter(Boolean);
     if (list.length) await this.client.deleteFiles(list);
+  }
+
+  async usage() {
+    if (!this.client.getUsageInfo) return { totalBytes: 0, limitBytes: 0, filesUploaded: 0 };
+    const u = await this.client.getUsageInfo();
+    return { totalBytes: u.appTotalBytes ?? u.totalBytes, limitBytes: u.limitBytes, filesUploaded: u.filesUploaded };
   }
 
   async list(): Promise<RemoteFile[]> {
