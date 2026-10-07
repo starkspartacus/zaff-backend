@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Inject, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { TenantConnectionService } from '../../../database/tenant-connection.service';
 import { EstablishmentsService } from '../../global/establishments/establishments.service';
@@ -12,6 +12,13 @@ import { paymentLabel } from '../../../common/enums/payment-labels';
 import { ContractVersion, ContractVersionSchema } from './contract-version.schema';
 import { ContractContext, ContractItem, ContractSettings, renderContract, resolveContract } from './contract-template';
 import { ContractSettingsDto } from './dto/contract-settings.dto';
+import { WARRANTY_CODES, WarrantyCodes } from './warranty-code';
+import { ProductUnit, ProductUnitSchema } from '../common/schemas/product-unit.schema';
+import { UnitStatus } from '../../../common/enums/unit-status.enum';
+
+/** N° de série partiellement masqué : de quoi le comparer à l'appareil, sans l'exposer en entier */
+export const maskSerial = (s: string | null) => (!s ? null : s.length <= 6 ? s : `${s.slice(0, 3)}${'•'.repeat(Math.min(6, s.length - 7))}${s.slice(-4)}`);
+const DAY = 24 * 3600 * 1000;
 
 const iso = (d: Date | null) => (d ? new Date(d).toISOString() : null);
 
@@ -20,12 +27,14 @@ export class ContractsService {
   constructor(
     private readonly tenantConnectionService: TenantConnectionService,
     private readonly establishmentsService: EstablishmentsService,
+    @Optional() @Inject(WARRANTY_CODES) private readonly codes?: WarrantyCodes,
   ) {}
 
   private m<T>(db: string, name: string, schema: any) { return this.tenantConnectionService.getModel<T>(db, name, schema); }
   private sales(db: string) { return this.m<Sale>(db, Sale.name, SaleSchema); }
   private products(db: string) { return this.m<Product>(db, Product.name, ProductSchema); }
   private warranties(db: string) { return this.m<Warranty>(db, Warranty.name, WarrantySchema); }
+  private units(db: string) { return this.m<ProductUnit>(db, ProductUnit.name, ProductUnitSchema); }
   private versions(db: string) { return this.m<ContractVersion>(db, ContractVersion.name, ContractVersionSchema); }
 
   getSettings(tenant: any): ContractSettings {
@@ -89,7 +98,7 @@ export class ContractsService {
     const byId = new Map(products.map((p: any) => [String(p._id), p]));
     const warranties: any[] = await this.warranties(db).find({ saleId: sale._id }).exec();
 
-    const items: ContractItem[] = sale.items.map((i: any) => {
+    const items: ContractItem[] = sale.items.map((i: any, line: number) => {
       const p: any = byId.get(String(i.productId)) || {};
       // Même règle que les retours : garantie enregistrée à la vente, sinon garantie par défaut de la boutique
       const w = warranties.find((x) => (i.serialNumber ? x.serialNumber === i.serialNumber : String(x.productId) === String(i.productId)));
@@ -110,6 +119,7 @@ export class ContractsService {
         warrantyMonths: months,
         warrantyStart: iso(w?.warrantyStart || sale.saleDate)!,
         warrantyEnd: iso(end),
+        verifyCode: this.codes && line < 256 ? this.codes.encode(tenant._id, sale._id, line) : null,
       };
     });
 
@@ -173,11 +183,70 @@ export class ContractsService {
             warrantyMonths: months,
             warrantyStart: now.toISOString(),
             warrantyEnd: end.toISOString(),
+            verifyCode: null,
           },
         ],
         policy,
       },
       { sample: true },
     );
+  }
+
+  /**
+   * Vérification publique d'une garantie (QR code de la fiche) : uniquement l'appareil, la boutique et
+   * l'état de la garantie — jamais le client, le prix ni le N° de série complet.
+   */
+  async verify(code: string) {
+    const invalid = new NotFoundException("Ce QR code n'est pas reconnu : la garantie ne peut pas être confirmée. Demandez la facture au vendeur.");
+    const ref = this.codes?.decode(code);
+    if (!ref) throw invalid;
+    const tenant: any = await this.establishmentsService.findById(ref.establishmentId).catch(() => null);
+    if (!tenant) throw invalid;
+    const db = tenant.databaseName;
+    const sale: any = await this.sales(db).findById(ref.saleId).exec();
+    const item = sale?.items?.[ref.line];
+    if (!item) throw invalid;
+
+    const policy = resolveReturnPolicy(tenant.settings);
+    const product: any = await this.products(db).findById(item.productId).exec();
+    const warranties: any[] = await this.warranties(db).find({ saleId: sale._id }).exec();
+    const w = warranties.find((x) => (item.serialNumber ? x.serialNumber === item.serialNumber : String(x.productId) === String(item.productId)));
+    const end = effectiveWarrantyEnd(policy, new Date(sale.saleDate), w?.warrantyEnd || null);
+    const months = w?.warrantyDurationMonths ?? (end ? policy.defective.defaultWarrantyMonths : 0);
+
+    // Ce qu'est devenu l'appareil depuis la vente
+    let device: 'with_customer' | 'in_repair' | 'returned' = 'with_customer';
+    if (item.serialNumber) {
+      const unit: any = await this.units(db).findOne({ serialNumber: item.serialNumber }).exec();
+      if (unit && String(unit.saleId) !== String(sale._id)) device = 'returned';
+      else if (unit?.status === UnitStatus.IN_REPAIR) device = 'in_repair';
+      else if (unit && unit.status !== UnitStatus.SOLD) device = 'returned';
+    }
+    const now = Date.now();
+    const status = device === 'returned' ? 'returned' : !end ? 'none' : end.getTime() >= now ? 'active' : 'expired';
+    const country = findCountry(tenant.countryCode);
+
+    return {
+      status,
+      device,
+      daysLeft: end && status === 'active' ? Math.ceil((end.getTime() - now) / DAY) : 0,
+      warrantyMonths: months,
+      purchaseDate: iso(sale.saleDate),
+      warrantyEnd: iso(end),
+      invoiceNumber: sale.invoiceNumber,
+      product: {
+        name: item.productName,
+        brand: product?.brand || null,
+        model: product?.model || null,
+        color: product?.color || null,
+        serialMasked: maskSerial(item.serialNumber || null),
+      },
+      shop: {
+        name: (tenant.settings?.salesContract?.legal?.legalName || tenant.name) as string,
+        city: [tenant.commune, tenant.city, country?.name].filter(Boolean).join(', ') || null,
+        phone: tenant.phone || null,
+        active: tenant.status !== 'suspended',
+      },
+    };
   }
 }

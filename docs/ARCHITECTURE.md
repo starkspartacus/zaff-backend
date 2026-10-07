@@ -93,6 +93,17 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 - Garantie d'un appareil : `effectiveWarrantyEnd` (`returns/return-rules.ts`) = garantie enregistrée à la vente, sinon
   garantie par défaut de la politique — **même règle que les retours**. État (`condition` neuf / reconditionné /
   occasion) et `accessories` sur le modèle `Product`.
+- **QR code de vérification** : chaque ligne du contrat porte `verifyCode` = base64url(boutique · vente · ligne) +
+  signature HMAC-SHA256 tronquée (clé dérivée de `JWT_SECRET`, `warranty-code.ts`) : infalsifiable, sans donnée
+  personnelle. `GET /public/warranty/:code` (**public**, sans connexion, `no-store`) : statut `active | expired | none |
+  returned`, appareil `with_customer | in_repair | returned`, jours restants, appareil (N° de série masqué), boutique.
+  Jamais le client ni le prix. Changer `JWT_SECRET` invalide les QR déjà imprimés.
+
+## Fiche produit rapide (`GET /global/reference/devices`)
+- `src/common/catalog/device-catalog.ts` : par catégorie de référence, profil (libellé de variante, capacités /
+  configurations, couleurs, accessoires habituels, garantie usuelle) et modèles connus par marque (iPhone, Galaxy,
+  Tecno, Infinix, Itel, Redmi, HP, Dell, Lenovo, MacBook…, avec capacités et coloris officiels quand connus).
+  Simples suggestions : le frontend les complète avec les produits de la boutique, et toute valeur peut être tapée.
 
 ## Clôture de caisse (`/cash-closings`)
 - Chaque vente porte `sellerId` et `closingId` (null tant qu'elle n'est pas clôturée).

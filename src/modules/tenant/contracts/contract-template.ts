@@ -503,6 +503,8 @@ export interface ContractItem {
   warrantyMonths: number;
   warrantyStart: string;
   warrantyEnd: string | null;
+  /** Code du QR de vérification de garantie (null dans un aperçu) */
+  verifyCode: string | null;
 }
 
 export interface RenderedArticle {

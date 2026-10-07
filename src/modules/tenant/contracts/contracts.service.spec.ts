@@ -2,8 +2,9 @@ import { Types } from 'mongoose';
 import { fakeTenantConnection } from '../../../testing/fake-model';
 import { SalesService } from '../sales/sales.service';
 import { UnitsService } from '../units/units.service';
-import { ContractsService } from './contracts.service';
+import { ContractsService, maskSerial } from './contracts.service';
 import { DEFAULT_ARTICLES, parseBlocks, resolveContract } from './contract-template';
+import { WarrantyCodes } from './warranty-code';
 
 const DB = 'zaff_tenant_test';
 const actor = { userId: new Types.ObjectId().toString(), name: 'Awa' };
@@ -30,8 +31,12 @@ describe('Contrat de vente et garantie', () => {
         tenant.settings = { ...tenant.settings, [section]: value };
         return tenant;
       },
+      findById: async (id: string) => {
+        if (String(id) !== String(tenant._id)) throw new Error('introuvable');
+        return tenant;
+      },
     };
-    contracts = new ContractsService(conn as any, establishments);
+    contracts = new ContractsService(conn as any, establishments, new WarrantyCodes('secret-de-test-assez-long-pour-hmac'));
     const iphone = await conn.getModel(DB, 'Product').create({
       name: 'iPhone 15 Pro', sku: 'IPH15P', category: 'smartphones', brand: 'Apple', model: '256 Go', color: 'Noir',
       salePrice: 850000, stockQuantity: 0, hasSerialNumbers: true, condition: 'refurbished', accessories: 'Câble, boîte',
@@ -116,5 +121,44 @@ describe('Contrat de vente et garantie', () => {
       { type: 'p', text: 'Intro :' }, { type: 'li', text: 'un ;' }, { type: 'li', text: 'deux' }, { type: 'p', text: 'Fin.' },
     ]);
     expect(resolveContract({ mode: 'custom', articles: [] } as any).mode).toBe('default');
+  });
+
+  describe('QR code de vérification de garantie', () => {
+    it('chaque appareil du contrat a un code signé, vérifiable sans connexion et sans données du client', async () => {
+      const doc = await contracts.forSale(tenant, saleId);
+      const code = doc.items[0].verifyCode!;
+      expect(code).toMatch(/^[\w-]+\.[\w-]+$/);
+      const v = await contracts.verify(code);
+      expect(v).toMatchObject({ status: 'active', device: 'with_customer', warrantyMonths: 6, invoiceNumber: 1001 });
+      expect(v.product).toMatchObject({ name: 'iPhone 15 Pro', brand: 'Apple' });
+      expect(maskSerial('356789104512345')).toBe('356••••••2345');
+      expect(v.daysLeft).toBeGreaterThan(150);
+      expect(JSON.stringify(v)).not.toMatch(/Michel|2250701|850000/);
+    });
+
+    it('code modifié, tronqué ou signé avec un autre secret → refusé', async () => {
+      const code = (await contracts.forSale(tenant, saleId)).items[0].verifyCode!;
+      const [p, sig] = code.split('.');
+      const tampered = `${p.slice(0, -2)}${p.endsWith('A') ? 'B' : 'A'}${p.slice(-1)}.${sig}`;
+      await expect(contracts.verify(tampered)).rejects.toThrow(/pas reconnu/);
+      await expect(contracts.verify(p)).rejects.toThrow(/pas reconnu/);
+      await expect(contracts.verify('n.importe.quoi')).rejects.toThrow(/pas reconnu/);
+      const other = new WarrantyCodes('un-autre-secret-tout-aussi-long-que-le-premier');
+      await expect(contracts.verify(other.encode(tenant._id, saleId, 0))).rejects.toThrow(/pas reconnu/);
+    });
+
+    it("garantie expirée, appareil à l'atelier ou rapporté au magasin", async () => {
+      const code = (await contracts.forSale(tenant, saleId)).items[0].verifyCode!;
+      const unit = conn.models.ProductUnit.docs.find((u) => u.serialNumber === 'IMEI1');
+      unit.status = 'in_repair';
+      expect((await contracts.verify(code)).device).toBe('in_repair');
+      unit.status = 'in_stock';
+      unit.saleId = null;
+      expect((await contracts.verify(code)).status).toBe('returned');
+      unit.status = 'sold';
+      unit.saleId = new Types.ObjectId(saleId);
+      for (const w of conn.models.Warranty.docs) w.warrantyEnd = new Date(Date.now() - 24 * 3600 * 1000);
+      expect(await contracts.verify(code)).toMatchObject({ status: 'expired', daysLeft: 0 });
+    });
   });
 });
