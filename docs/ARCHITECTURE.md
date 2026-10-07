@@ -15,6 +15,8 @@ Priorité absolue : une expérience simple et compréhensible (UI et messages d'
 - `user_directory` : annuaire identifiant (téléphone normalisé / e-mail) → boutique + id du compte.
   Sert UNIQUEMENT à résoudre la boutique à la connexion. Tenu à jour par `DirectoryService.syncUser/removeUser`
   (création de boutique, création / modification / suppression d'un collaborateur, connexion d'un ancien compte).
+- `catalog_images` : **base d'images produits partagée par toutes les boutiques** (marque, modèle, couleur, clés
+  normalisées, fichier ≤ 600 Ko, empreinte sha256 anti-doublon, boutique qui l'a ajoutée, compteur d'utilisation).
 - `reference_categories` : catalogue de référence (catégories + marques usuelles), seedé au démarrage, en cache 10 min.
 - `super_admins` : administrateurs de la plateforme (pas encore de connexion dédiée).
 
@@ -104,6 +106,14 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   configurations, couleurs, accessoires habituels, garantie usuelle) et modèles connus par marque (iPhone, Galaxy,
   Tecno, Infinix, Itel, Redmi, HP, Dell, Lenovo, MacBook…, avec capacités et coloris officiels quand connus).
   Simples suggestions : le frontend les complète avec les produits de la boutique, et toute valeur peut être tapée.
+
+## Images produits partagées (`/global/images`)
+- `GET /global/images?brand&model&color&category` (connecté) : photos du modèle, toutes boutiques confondues, la couleur
+  demandée d'abord puis les plus utilisées. `GET /global/images/:id/file` : **public** (balise `<img>`), cache 1 an immuable.
+- `POST /global/images` (multipart `file` + brand, model, color?, category? ; propriétaire / magasinier) : le navigateur
+  réduit la photo (≤ 1000 px) ; le serveur vérifie le **vrai type par les premiers octets** (JPEG / PNG / WebP, pas de
+  SVG), 600 Ko max, et ne stocke qu'une fois une même photo. `DELETE /global/images/:id` : seule la boutique qui l'a ajoutée.
+- `Product.imageId` : photo choisie ; la création / modification d'un produit met à jour le compteur `usage`.
 
 ## Clôture de caisse (`/cash-closings`)
 - Chaque vente porte `sellerId` et `closingId` (null tant qu'elle n'est pas clôturée).

@@ -54,6 +54,10 @@ export class Product {
   @Prop({ enum: ['new', 'refurbished', 'used'], default: 'new' })
   condition: 'new' | 'refurbished' | 'used';
 
+  /** Photo choisie dans la base d'images partagée (`catalog_images`, base globale) */
+  @Prop({ default: null })
+  imageId: string;
+
   /** Accessoires fournis avec l'appareil (ex. : chargeur, câble, boîte) */
   @Prop({ default: null, trim: true })
   accessories: string;

@@ -54,6 +54,7 @@ const query = (run: () => any, registry?: Record<string, FakeModel>, single = fa
     sort: (s: Record<string, number>) => ((sortSpec = s), q),
     populate: (path: string) => (paths.push(path), q),
     limit: () => q,
+    select: () => q,
     lean: () => q,
     exec: async () => {
       let res = run();

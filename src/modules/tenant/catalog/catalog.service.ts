@@ -1,4 +1,5 @@
-import { Injectable, BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, ConflictException, NotFoundException, Optional } from '@nestjs/common';
+import { ImagesService } from '../../global/images/images.service';
 import { TenantConnectionService } from '../../../database/tenant-connection.service';
 import { Category, CategorySchema } from '../common/schemas/category.schema';
 import { Brand, BrandSchema } from '../common/schemas/brand.schema';
@@ -8,7 +9,10 @@ import { CreateCategoryDto, CreateBrandDto, CreateProductDto, SetupHierarchyDto 
 
 @Injectable()
 export class CatalogService {
-  constructor(private readonly tenantConnectionService: TenantConnectionService) {}
+  constructor(
+    private readonly tenantConnectionService: TenantConnectionService,
+    @Optional() private readonly images?: ImagesService,
+  ) {}
 
   private getCategoryModel(db: string) { return this.tenantConnectionService.getModel<Category>(db, Category.name, CategorySchema); }
   private getBrandModel(db: string) { return this.tenantConnectionService.getModel<Brand>(db, Brand.name, BrandSchema); }
@@ -75,7 +79,9 @@ export class CatalogService {
     await this.assertBarcodeFree(db, dto.barcode);
     // Produit à N° de série : le stock part de 0 et ne monte qu'en scannant des unités
     const stockQuantity = dto.hasSerialNumbers ? 0 : dto.stockQuantity || 0;
-    return model.create({ ...dto, sku, barcode: dto.barcode?.trim() || null, stockQuantity });
+    const created = await model.create({ ...dto, sku, barcode: dto.barcode?.trim() || null, stockQuantity });
+    await this.images?.used(dto.imageId);
+    return created;
   }
 
   async updateProduct(db: string, id: string, dto: Partial<CreateProductDto>) {
@@ -100,7 +106,12 @@ export class CatalogService {
     if (willBeSerial) delete update.stockQuantity;
     if (dto.sku) update.sku = dto.sku.trim().toUpperCase();
 
-    return model.findByIdAndUpdate(id, update, { new: true }).exec();
+    const saved = await model.findByIdAndUpdate(id, update, { new: true }).exec();
+    if (dto.imageId !== undefined && String(dto.imageId) !== String(product.imageId)) {
+      await this.images?.used(product.imageId, -1);
+      await this.images?.used(dto.imageId);
+    }
+    return saved;
   }
 
   async deleteProduct(db: string, id: string) {

@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsNumber, IsOptional, IsArray, IsBoolean, IsIn, MaxLength } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsOptional, IsArray, IsBoolean, IsIn, MaxLength, Matches } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 
 export class CreateCategoryDto {
@@ -108,6 +108,11 @@ export class CreateProductDto {
   @IsIn(['new', 'refurbished', 'used'])
   @IsOptional()
   condition?: 'new' | 'refurbished' | 'used';
+
+  @ApiPropertyOptional({ description: "Photo de la base d'images partagée (id), null pour la retirer" })
+  @IsOptional()
+  @Matches(/^[a-f0-9]{24}$/, { message: 'Photo invalide.' })
+  imageId?: string | null;
 
   @ApiPropertyOptional({ example: 'Chargeur, câble USB-C, boîte' })
   @IsString()

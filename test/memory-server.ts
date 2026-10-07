@@ -31,7 +31,7 @@ const tenantService = {
   getTenantConnection: () => ({}),
   getGlobalConnection: () => ({}),
 };
-const global = { Establishment: new FakeModel(['slug']), UserDirectory: new FakeModel(), ReferenceCategory: new FakeModel(['slug']) };
+const global = { Establishment: new FakeModel(['slug']), UserDirectory: new FakeModel(), ReferenceCategory: new FakeModel(['slug']), CatalogImage: new FakeModel(['sha256']) };
 const fakeConnection: any = { model: () => new FakeModel(), models: {}, useDb: () => fakeConnection, close: async () => undefined };
 
 (async () => {
