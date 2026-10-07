@@ -23,6 +23,20 @@ export class Establishment {
   @Prop({ trim: true })
   address: string;
 
+  /** Pays (ISO), ville et commune : choisis dans les listes à l'inscription */
+  @Prop({ uppercase: true, trim: true, default: null })
+  countryCode: string;
+
+  @Prop({ trim: true, default: null })
+  city: string;
+
+  @Prop({ trim: true, default: null })
+  commune: string;
+
+  /** Devise ISO 4217 (XOF…) ; `currency` garde le symbole affiché (F CFA…) */
+  @Prop({ uppercase: true, trim: true, default: null })
+  currencyCode: string;
+
   @Prop({ default: 'F', trim: true })
   currency: string;
 

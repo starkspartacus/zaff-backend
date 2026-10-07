@@ -25,10 +25,9 @@ export class AuthService {
   }
 
   /** Compte d'un établissement correspondant à l'identifiant (anciens numéros saisis avec espaces inclus) */
-  private findUser(databaseName: string, raw: string) {
-    const normalized = normalizeIdentifier(raw);
+  private findUser(databaseName: string, identifier: string, raw: string) {
     return this.userModel(databaseName).findOne({
-      $or: [{ phone: normalized }, { phone: raw.trim() }, { email: normalized }],
+      $or: [{ phone: identifier }, { phone: raw.trim() }, { email: identifier }],
     });
   }
 
@@ -42,13 +41,14 @@ export class AuthService {
     const all = await this.establishmentsService.findAll();
     const found: any[] = [];
     for (const est of all) {
-      if (est.status === 'active' && (await this.findUser(est.databaseName, identifier))) found.push(est);
+      if (est.status === 'active' && (await this.findUser(est.databaseName, identifier, identifier))) found.push(est);
     }
     return found;
   }
 
   async login(dto: LoginDto) {
-    const identifier = dto.identifier.trim();
+    // Téléphone : le pays choisi donne l'indicatif (07 07… + CI → +2250707…) ; e-mail : en minuscules
+    const identifier = normalizeIdentifier(dto.identifier, dto.countryCode);
 
     let candidates: any[];
     if (dto.tenantSlug) {
@@ -62,7 +62,7 @@ export class AuthService {
     // Vérifie le mot de passe dans chaque boutique candidate
     const matches: Array<{ establishment: any; user: any }> = [];
     for (const establishment of candidates) {
-      const user = await this.findUser(establishment.databaseName, identifier);
+      const user = await this.findUser(establishment.databaseName, identifier, dto.identifier);
       if (user && user.isActive && (await bcrypt.compare(dto.password, user.password))) {
         matches.push({ establishment, user });
       }
@@ -111,6 +111,8 @@ export class AuthService {
         name: establishment.name,
         slug: establishment.slug,
         currency: establishment.currency,
+        countryCode: establishment.countryCode || null,
+        city: establishment.city || null,
       },
     };
   }

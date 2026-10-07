@@ -4,6 +4,7 @@ import { GLOBAL_CONNECTION } from '../../../database/database.constants';
 import { Establishment, EstablishmentSchema } from './schemas/establishment.schema';
 import { EstablishmentsService } from './establishments.service';
 import { EstablishmentsController } from './establishments.controller';
+import { RegistrationService } from './registration.service';
 
 @Module({
   imports: [
@@ -13,7 +14,7 @@ import { EstablishmentsController } from './establishments.controller';
     ),
   ],
   controllers: [EstablishmentsController],
-  providers: [EstablishmentsService],
+  providers: [EstablishmentsService, RegistrationService],
   exports: [EstablishmentsService],
 })
 export class EstablishmentsModule {}

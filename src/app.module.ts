@@ -5,6 +5,7 @@ import { DatabaseModule } from './database/database.module';
 import { EstablishmentsModule } from './modules/global/establishments/establishments.module';
 import { DirectoryModule } from './modules/global/directory/directory.module';
 import { ReferenceModule } from './modules/global/reference/reference.module';
+import { GeoModule } from './modules/global/geo/geo.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { AuthModule } from './modules/tenant/auth/auth.module';
 import { UsersModule } from './modules/tenant/users/users.module';
@@ -31,6 +32,7 @@ import { ReturnsModule } from './modules/tenant/returns/returns.module';
     DatabaseModule,
     DirectoryModule,
     ReferenceModule,
+    GeoModule,
     RealtimeModule,
     EstablishmentsModule,
     AuthModule,

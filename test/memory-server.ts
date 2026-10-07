@@ -52,7 +52,7 @@ const fakeConnection: any = { model: () => new FakeModel(), models: {}, useDb: (
 
   // ─── Données de démonstration ───
   const db = 'zaff_tenant_boutique_test';
-  await global.Establishment.create({ name: 'Boutique Test', slug: 'boutique-test', databaseName: db, currency: 'F CFA', status: 'active', settings: {} });
+  await global.Establishment.create({ name: 'Boutique Test', slug: 'boutique-test', databaseName: db, currency: 'F CFA', currencyCode: 'XOF', countryCode: 'CI', city: 'Abidjan', commune: 'Cocody', status: 'active', settings: {} });
   const password = await bcrypt.hash('secret', 10);
   const users = tenant(db).getModel(db, 'TenantUser');
   const [owner, , storekeeper] = await Promise.all([

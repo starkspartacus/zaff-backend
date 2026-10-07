@@ -10,7 +10,8 @@ Priorité absolue : une expérience simple et compréhensible (UI et messages d'
 
 ## Bases de données (MongoDB)
 **Base globale** `zaff_global` (connexion `GLOBAL_CONNECTION`) — collections communes à toute la plateforme :
-- `establishments` : boutiques (slug, `databaseName`, statut active/suspended, devise).
+- `establishments` : boutiques (slug interne généré, `databaseName`, statut, pays `countryCode`, ville, commune,
+  devise `currency` = symbole affiché + `currencyCode` ISO).
 - `user_directory` : annuaire identifiant (téléphone normalisé / e-mail) → boutique + id du compte.
   Sert UNIQUEMENT à résoudre la boutique à la connexion. Tenu à jour par `DirectoryService.syncUser/removeUser`
   (création de boutique, création / modification / suppression d'un collaborateur, connexion d'un ancien compte).
@@ -22,6 +23,22 @@ users, products, product_units, sales, sale_returns, stock_movements, customers,
 repairs, warranties, categories, brands, notifications, push_subscriptions, cash_closings, product_returns, credit_notes.
 Paramètres de la boutique (dont `settings.returnPolicy`) : dans `establishments` (base globale), chargés à chaque requête par `TenantGuard`.
 Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenant('databaseName')` aux services.
+
+## Pays, téléphones, inscription
+- **Données géographiques** (`src/common/geo/`) : 245 pays (libphonenumber) avec indicatif, drapeau, devise ISO +
+  symbole (`F CFA`, `₦`…), villes principales des 54 pays africains, communes / arrondissements des grandes villes.
+  **Abidjan : commune obligatoire** (`communeRequired`). Pays sans liste : ville saisie librement.
+  API publique en cache 24 h : `GET /global/geo/countries`, `GET /global/geo/countries/:code/cities`.
+- **Téléphones au format international E.164** (`toE164(numéro, pays)`, `normalizeIdentifier`) : le pays choisi donne
+  l'indicatif, libphonenumber vérifie la longueur (Côte d'Ivoire : 10 chiffres, le 0 est conservé). Un numéro est donc
+  unique **par pays** (07 51… en CI ≠ 07 51… en France). E-mails en minuscules.
+- **Unicité** d'un numéro et d'un e-mail sur toute la plateforme via `user_directory` (inscription et collaborateurs) ;
+  conflits renvoyés en 409 avec `details.code` `PHONE_TAKEN` / `EMAIL_TAKEN` (le frontend ouvre une fenêtre dédiée).
+- **Inscription** `POST /global/establishments` (`RegistrationService`) : tout est validé côté serveur (pays, ville
+  de la liste, commune, numéro valide, e-mail obligatoire, mot de passe ≥ 8 caractères avec lettre et chiffre),
+  **aucune valeur par défaut**, annulation complète si une étape échoue, réponse sans informations internes.
+  `POST /global/establishments/check` : numéro / e-mail valides et libres (vérification en direct).
+- **Connexion** : `identifier` = e-mail, ou numéro + `countryCode` (le pays donne l'indicatif).
 
 ## Rôles (`common/enums/role.enum.ts`)
 - `admin` = propriétaire : tout. `seller` = vendeur : vend (scan / caisse), voit le stock, ses propres ventes.
@@ -93,7 +110,7 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 ## Conventions
 - Réponses HTTP enveloppées `{ success, data, timestamp }` (`TransformInterceptor`) ; erreurs `{ success:false, message, details? }`.
 - Messages d'erreur métier en français, compréhensibles par un vendeur (« L'appareil X a déjà été vendu (facture #1001) »).
-- Téléphones normalisés avec `normalizePhone` / `normalizeIdentifier` (`common/utils/identifier.ts`) avant stockage.
+- Téléphones stockés au format E.164 (`toE164` / `normalizeIdentifier`), jamais tels que saisis.
 - Port 8000 par défaut, préfixe `/api`, Swagger sur `/api/docs`.
 - **Aucun secret dans le code.** Configuration lue uniquement depuis l'environnement et validée au démarrage
   (`src/config/env.validation.ts`) : `MONGODB_URI` et `JWT_SECRET` obligatoires (JWT ≥ 32 caractères en

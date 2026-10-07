@@ -23,7 +23,7 @@ export class UsersController {
   @Roles(Role.ADMIN, Role.SUPERADMIN)
   @ApiOperation({ summary: 'Créer un collaborateur pour la boutique' })
   create(@CurrentTenant() tenant: any, @Body() dto: CreateUserDto) {
-    return this.usersService.create(tenant.databaseName, tenant._id, dto);
+    return this.usersService.create(tenant.databaseName, tenant._id, dto, tenant.countryCode);
   }
 
   @Get()
@@ -44,7 +44,7 @@ export class UsersController {
   @Roles(Role.ADMIN, Role.SUPERADMIN)
   @ApiOperation({ summary: 'Mettre à jour un collaborateur' })
   update(@CurrentTenant() tenant: any, @Param('id') id: string, @Body() dto: UpdateUserDto) {
-    return this.usersService.update(tenant.databaseName, tenant._id, id, dto);
+    return this.usersService.update(tenant.databaseName, tenant._id, id, dto, tenant.countryCode);
   }
 
   @Delete(':id')

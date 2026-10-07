@@ -30,7 +30,7 @@ export class DirectoryService {
   async syncUser(establishmentId: unknown, user: DirectoryUser) {
     const estId = new Types.ObjectId(String(establishmentId));
     const userId = new Types.ObjectId(String(user._id));
-    const identifiers = [user.phone, user.email].filter((v): v is string => !!v).map(normalizeIdentifier);
+    const identifiers = [user.phone, user.email].filter((v): v is string => !!v).map((v) => normalizeIdentifier(v));
 
     await this.directoryModel.deleteMany({ establishmentId: estId, tenantUserId: userId, identifier: { $nin: identifiers } });
     for (const identifier of identifiers) {

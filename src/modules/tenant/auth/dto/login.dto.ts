@@ -16,4 +16,9 @@ export class LoginDto {
   @IsString()
   @IsOptional()
   tenantSlug?: string;
+
+  @ApiPropertyOptional({ example: 'CI', description: 'Pays du numéro (connexion par téléphone sans indicatif)' })
+  @IsString()
+  @IsOptional()
+  countryCode?: string;
 }
