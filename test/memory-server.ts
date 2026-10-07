@@ -12,6 +12,7 @@ import { getConnectionToken, getModelToken } from '@nestjs/mongoose';
 import * as bcrypt from 'bcrypt';
 import { AppModule } from '../src/app.module';
 import { GLOBAL_CONNECTION } from '../src/database/database.constants';
+import { DirectoryService } from '../src/modules/global/directory/directory.service';
 import { TenantConnectionService } from '../src/database/tenant-connection.service';
 import { FakeModel, fakeTenantConnection } from '../src/testing/fake-model';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
@@ -52,7 +53,7 @@ const fakeConnection: any = { model: () => new FakeModel(), models: {}, useDb: (
 
   // ─── Données de démonstration ───
   const db = 'zaff_tenant_boutique_test';
-  await global.Establishment.create({ name: 'Boutique Test', slug: 'boutique-test', databaseName: db, currency: 'F CFA', currencyCode: 'XOF', countryCode: 'CI', city: 'Abidjan', commune: 'Cocody', status: 'active', settings: {} });
+  const est = await global.Establishment.create({ name: 'Boutique Test', slug: 'boutique-test', databaseName: db, currency: 'F CFA', currencyCode: 'XOF', countryCode: 'CI', city: 'Abidjan', commune: 'Cocody', status: 'active', settings: {} });
   const password = await bcrypt.hash('secret', 10);
   const users = tenant(db).getModel(db, 'TenantUser');
   const [owner, , storekeeper] = await Promise.all([
@@ -60,6 +61,9 @@ const fakeConnection: any = { model: () => new FakeModel(), models: {}, useDb: (
     users.create({ name: 'Awa', phone: '+2250700000002', password, role: 'seller', isActive: true }),
     users.create({ name: 'Koné', phone: '+2250700000003', password, role: 'storekeeper', isActive: true }),
   ]);
+  // Annuaire global : connexion sans boutique et unicité des numéros / e-mails
+  const directory = app.get(DirectoryService);
+  for (const u of await users.find({}).lean()) await directory.syncUser(est._id, u as never);
   const products = tenant(db).getModel(db, 'Product');
   const iphone = await products.create({
     name: 'iPhone 15 Pro', sku: 'IPH15P-256', category: 'smartphones', brand: 'Apple', model: '256 Go', color: 'Titane naturel',
