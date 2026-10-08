@@ -161,6 +161,17 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   dont le titre cite le modèle, crédit auteur + licence gardé dans `verdict.credit`) ; tout épuisé → `AiQuotaExceeded` :
   le lot passe en **`paused`** (`resumeAt`) et reprend tout seul (minuterie, aussi après redémarrage), sans perdre d'appareil.
   `GET /status` liste les fournisseurs et ceux en attente de quota.
+- **Refus de Google** lus en détail (`parseGoogleQuota`) : délai annoncé (« retry in 22.8s » / RetryInfo), quota du jour,
+  `limit: 0` (aucun quota gratuit pour ce modèle ou pour la recherche Google → 24 h) ; vrai message journalisé une fois par
+  heure et par modèle. Réponse lente / réseau coupé → ce fournisseur se repose 1 min, on passe au suivant (120 s max).
+- **Complétion des fiches** (lot `kind: 'specs'`, `selection: 'incomplete'`) : 6 appareils par requête, sans recherche
+  Google (peu de quota) ; coloris officiels + **codes couleur** (`colorCodes [{ name, hex }]`), capacités vendues, fiche
+  technique ; `DevicesService.applyAiFacts` ne remplit **que ce qui est vide** (jamais la saisie de l'admin), codes hex
+  vérifiés, modèle inconnu de l'IA (`known: false`) → rien d'inventé ; `aiFilledAt` pour relecture.
+- **Journal par appareil** (`log` du lot : trouvé / sans résultat / erreur + raison : photos repérées, refus HTTP, autre
+  modèle…). Aucune photo utilisable via la recherche IA → nouvel essai sur Wikimedia. Téléchargements : en-tête Referer,
+  navigateur classique pour les fabricants, robot identifié pour Wikimedia (sinon 429), vignettes Commons en taille standard
+  (1280), un site qui répond 429 n'est plus sollicité pour l'appareil ; un appareil à la fois.
 - **Lots** `ai_image_jobs` (`POST /jobs` : `deviceIds`, ou `selection: missing-popular` + `limit` ≤ 200 = appareils sans photo
   les plus utilisés, sans ceux déjà en attente ; `auto`, `minScore`, `perDevice`). Traités en arrière-plan, un lot à la fois,
   2 appareils en parallèle, repris après un redémarrage (`doneIds`), arrêt possible (`/jobs/:id/cancel`) ; clé refusée /

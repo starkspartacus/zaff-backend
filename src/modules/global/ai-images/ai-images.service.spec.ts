@@ -22,7 +22,14 @@ class FakeAi implements AiClient {
   failWith: Error | null = null;
   searchQuota: Date | null = null;
   reviewQuota: Date | null = null;
+  facts: any[] = [];
   async generate(req: AiRequest) {
+    const text = req.parts.map((p) => ('text' in p ? p.text : '')).join(' ');
+    if (text.includes('Devices:')) {
+      if (this.reviewQuota) throw new AiQuotaExceeded('quota', this.reviewQuota);
+      this.calls.push(req);
+      return { text: JSON.stringify({ devices: this.facts }), sources: [] };
+    }
     this.calls.push(req);
     if (this.failWith) throw this.failWith;
     if (req.search && this.searchQuota) throw new AiQuotaExceeded('quota', this.searchQuota);
@@ -156,7 +163,7 @@ describe('Photos des appareils trouvées par l\'IA', () => {
     await service.createJob({ deviceIds: [dev.id, (await devices.list({ search: 'iphone 15' })).items[0].id] });
     await service.kick();
     const [j] = await service.listJobs();
-    expect(j).toMatchObject({ status: 'failed', errors: 2, lastError: expect.stringMatching(/API key/) });
+    expect(j).toMatchObject({ status: 'failed', errors: 1, lastError: expect.stringMatching(/API key/) });
     ai.enabled = false;
     await expect(service.createJob({ deviceIds: [dev.id] })).rejects.toThrow(/GEMINI_API_KEY/);
   });
@@ -232,5 +239,45 @@ describe('Photos des appareils trouvées par l\'IA', () => {
       c: { title: 'File:Galaxy A55 tiny.jpg', imageinfo: [{ url: 'u3', width: 200, height: 150, extmetadata: {} }] },
     } } };
     expect(parseCommons(json, modelTokens('Samsung', 'Galaxy A55 5G')).map((x) => x.url)).toEqual(['u1']);
+  });
+
+  it('fiches complétées par l\'IA : seulement ce qui est vide, codes couleur ajoutés, rien d\'inventé', async () => {
+    const a = (await devices.list({ search: 'galaxy a55' })).items[0];
+    const b = await devices.update((await devices.list({ search: 'iphone 15 pro max' })).items[0].id, { colors: ['Titane noir'], specs: [{ label: 'Écran', value: 'Saisie admin' }] });
+    const c = await devices.create({ category: 'smartphones', brand: 'Inconnue', model: 'Zz 1' });
+    ai.facts = [
+      { id: a.id, known: true, colors: [{ name: 'Bleu glacé', hex: '#A9C8E8' }, { name: 'Noir', hex: '#1c1c1e' }, { name: 'Lilas', hex: 'violet' }], variants: ['8 Go + 128 Go', '8 Go + 256 Go'], specs: [{ label: 'Écran', value: '6,6" Super AMOLED 120 Hz' }] },
+      { id: b.id, known: true, colors: [{ name: 'Titane noir', hex: '#3b3b3d' }, { name: 'Titane bleu', hex: '#2f3a4c' }], variants: ['256 Go'], specs: [{ label: 'Écran', value: 'IA' }] },
+      { id: c.id, known: false },
+    ];
+    const job = await service.createJob({ kind: 'specs', deviceIds: [a.id, b.id, c.id] });
+    await service.kick();
+    expect(ai.calls.filter((r) => !r.search)).toHaveLength(1); // les 3 fiches en une seule requête
+    const A = await devices.get(a.id);
+    expect(A.colors).toEqual(['Bleu glacé', 'Noir', 'Lilas']);
+    expect(A.colorCodes).toEqual([{ name: 'Bleu glacé', hex: '#a9c8e8' }, { name: 'Noir', hex: '#1c1c1e' }]); // « violet » n'est pas un code
+    expect(A.variants).toEqual(['128 Go', '256 Go']); // déjà connues : gardées
+    const B = await devices.get(b.id);
+    expect(B.colors).toEqual(['Titane noir']); // saisie de l'admin gardée
+    expect(B.specs).toEqual([{ label: 'Écran', value: 'Saisie admin' }]);
+    expect(B.colorCodes).toEqual([{ name: 'Titane noir', hex: '#3b3b3d' }]);
+    expect((await devices.get(c.id)).colors).toEqual([]);
+    const [j] = await service.listJobs();
+    expect(j).toMatchObject({ id: job.id, kind: 'specs', status: 'done', processed: 3, found: 2, notFound: 1 });
+    expect(j.log.map((l: any) => l.detail)).toEqual(expect.arrayContaining([expect.stringMatching(/rien n'a été inventé/), expect.stringMatching(/Complété : coloris, codes couleur, fiche technique/)]));
+    // Sélection automatique : seulement les fiches encore incomplètes
+    const next = await service.createJob({ kind: 'specs', selection: 'incomplete', limit: 500 });
+    expect(next.total).toBeGreaterThan(100);
+  });
+
+  it('journal par appareil : on sait pourquoi aucune photo n\'a été trouvée', async () => {
+    const dev = await a55();
+    files = {}; // sites des fabricants et Wikimedia : toutes les photos refusées (404)
+    ai.verdicts = [];
+    await service.createJob({ deviceIds: [dev.id] });
+    await service.kick();
+    const [j] = await service.listJobs();
+    expect(j).toMatchObject({ notFound: 1 });
+    expect(j.log[0]).toMatchObject({ name: 'Samsung Galaxy A55 5G', result: 'none', detail: expect.stringMatching(/Recherche IA : \d+ photo\(s\) repérée\(s\).*HTTP 404.*Wikimedia/) });
   });
 });

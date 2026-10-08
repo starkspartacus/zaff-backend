@@ -80,6 +80,14 @@ export class GlobalDevice {
   @Prop({ default: null })
   defaultImageId: string;
 
+  /** Code couleur (hex) de chaque coloris officiel : pastilles et illustrations */
+  @Prop({ type: [Object], default: [] })
+  colorCodes: Array<{ name: string; hex: string }>;
+
+  /** Dernière complétion de la fiche par l'IA (coloris, capacités, fiche technique) */
+  @Prop({ default: null })
+  aiFilledAt: Date;
+
   /** Fiche technique officielle (affichée dans la Vitrine et la fiche produit des boutiques) */
   @Prop({ type: [DeviceSpec], default: [] })
   specs: DeviceSpec[];

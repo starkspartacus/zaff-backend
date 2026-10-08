@@ -45,6 +45,7 @@ class RateLimited extends Error {
   constructor(
     readonly retryMs: number,
     readonly daily: boolean,
+    readonly detail = '',
   ) {
     super('quota');
   }
@@ -86,13 +87,19 @@ interface Provider {
 }
 
 /** Délai conseillé par Google (RetryInfo « 37s ») et type de quota (par minute / par jour) */
-function parseGoogleQuota(json: any): { retryMs: number; daily: boolean } {
+export function parseGoogleQuota(json: any): { retryMs: number; daily: boolean; detail: string } {
   const details: any[] = json?.error?.details || [];
+  const message = String(json?.error?.message || '');
   const retry = details.find((d) => String(d?.['@type'] || '').includes('RetryInfo'))?.retryDelay;
-  const secs = Number(String(retry || '').replace(/s$/, ''));
+  let secs = Number(String(retry || '').replace(/s$/, ''));
+  if (!(secs > 0)) secs = Number(message.match(/retry in ([\d.]+)\s*s/i)?.[1] || 0);
   const quotaIds = details.flatMap((d) => (d?.violations || []).map((v: any) => String(v?.quotaId || '')));
-  const daily = quotaIds.some((q) => /PerDay/i.test(q)) || /per day|daily/i.test(json?.error?.message || '');
-  return { retryMs: Number.isFinite(secs) && secs > 0 ? secs * 1000 + 500 : 20_000, daily };
+  const daily = quotaIds.some((q) => /PerDay/i.test(q)) || /per[ _-]?day|daily/i.test(message);
+  // « limit: 0 » : ce modèle (ou la recherche Google) n'a aucun quota gratuit pour cette clé
+  const none = /limit:\s*0\b/.test(message);
+  const detail = message.replace(/\s+/g, ' ').slice(0, 220);
+  if (none) return { retryMs: 24 * 3600 * 1000, daily: true, detail };
+  return { retryMs: daily ? DAILY_COOLDOWN_MS : secs > 0 ? secs * 1000 + 500 : 30_000, daily, detail };
 }
 
 class GeminiModel implements Provider {
@@ -129,7 +136,7 @@ class GeminiModel implements Provider {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.key },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(90_000),
+        signal: AbortSignal.timeout(120_000),
       });
       const json: any = await res.json().catch(() => ({}));
       if (res.status === 503 && attempt < 2) {
@@ -138,7 +145,7 @@ class GeminiModel implements Provider {
       }
       if (res.status === 429) {
         const q = parseGoogleQuota(json);
-        throw new RateLimited(q.daily ? DAILY_COOLDOWN_MS : q.retryMs, q.daily);
+        throw new RateLimited(q.retryMs, q.daily, q.detail);
       }
       if (!res.ok) {
         const msg = json?.error?.message || `HTTP ${res.status}`;
@@ -194,7 +201,7 @@ class OpenAiCompatible implements Provider {
         messages: [{ role: 'user', content }],
         ...(req.schema ? { response_format: { type: 'json_object' } } : {}),
       }),
-      signal: AbortSignal.timeout(90_000),
+      signal: AbortSignal.timeout(120_000),
     });
     const json: any = await res.json().catch(() => ({}));
     if (res.status === 429) {
@@ -224,6 +231,7 @@ export class GeminiClient implements AiClient {
   private readonly rpm: number;
   private providers: Provider[] = [];
   private readonly cooldown = new Map<string, number>();
+  private readonly reported = new Map<string, number>();
   private discovered = false;
 
   constructor(config: ConfigService) {
@@ -287,7 +295,19 @@ export class GeminiClient implements AiClient {
         } catch (e) {
           if (e instanceof RateLimited) {
             this.cooldown.set(p.name, Date.now() + e.retryMs);
-            this.logger.warn(`${p.label} : quota ${e.daily ? 'du jour' : 'par minute'} atteint, on passe au suivant (${Math.round(e.retryMs / 1000)} s)`);
+            // Le vrai message de Google, une fois par fournisseur et par heure (pour comprendre quel quota bloque)
+            const said = this.reported.get(p.name) ?? 0;
+            if (Date.now() - said > 3600_000 && e.detail) {
+              this.reported.set(p.name, Date.now());
+              this.logger.warn(`${p.label} : ${e.detail}`);
+            }
+            this.logger.warn(`${p.label} : quota ${e.daily ? 'du jour' : 'par minute'} atteint${req.search ? ' (recherche Google)' : ''}, on passe au suivant (${Math.round(e.retryMs / 1000)} s)`);
+            continue;
+          }
+          // Réponse trop lente / réseau coupé : ce fournisseur se repose une minute, on essaie le suivant
+          if (e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError' || e instanceof TypeError)) {
+            this.cooldown.set(p.name, Date.now() + 60_000);
+            this.logger.warn(`${p.label} : pas de réponse (${e.message}), on passe au suivant`);
             continue;
           }
           if (e instanceof ModelGone) {

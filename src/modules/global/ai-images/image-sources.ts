@@ -103,7 +103,8 @@ export const commonsSearchUrl = (brand: string, model: string) =>
     gsrsearch: `filetype:bitmap ${brand} ${(model.toLowerCase().startsWith(brand.toLowerCase()) ? model.slice(brand.length) : model).trim()}`,
     prop: 'imageinfo',
     iiprop: 'url|size|extmetadata',
-    iiurlwidth: '1200',
+    // Taille de vignette standard de Wikimedia (les tailles libres sont refusées / limitées)
+    iiurlwidth: '1280',
   }).toString();
 
 /** Lecture de la réponse Commons : seules les photos dont le titre cite le modèle sont gardées */

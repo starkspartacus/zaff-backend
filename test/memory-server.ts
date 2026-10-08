@@ -51,6 +51,10 @@ const demoAi = {
     if (req.search) {
       return { text: JSON.stringify({ images: demoColors.map((_, i) => ({ url: `https://demo.zaff.app/${slug}-${i}.png`, page: 'https://demo.zaff.app/' + slug, color: ['Noir', 'Bleu', 'Violet'][i] })) }), sources: [] };
     }
+    if (prompt.includes('Devices:')) {
+      const ids = [...prompt.matchAll(/id ([a-f0-9]{24})/g)].map((m) => m[1]);
+      return { text: JSON.stringify({ devices: ids.map((id) => ({ id, known: true, colors: [{ name: 'Noir minuit', hex: '#1f2937' }, { name: 'Bleu glacier', hex: '#93c5fd' }, { name: 'Lavande', hex: '#c4b5fd' }], variants: ['128 Go', '256 Go'], specs: [{ label: 'Écran', value: '6,7" AMOLED 120 Hz' }, { label: 'Batterie', value: '5000 mAh' }] })) }), sources: [] };
+    }
     const n = req.parts.filter((p: any) => p.image).length;
     const images = Array.from({ length: n }, (_, i) => ({
       index: i, sameModel: i < 2, productPhoto: true, view: 'front', color: ['Noir', 'Bleu', 'Violet'][i], cleanBackground: true,

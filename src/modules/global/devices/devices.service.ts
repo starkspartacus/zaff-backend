@@ -82,6 +82,8 @@ export class DevicesService implements OnModuleInit {
       variants: d.variants || [],
       colors: d.colors || [],
       specs: (d.specs || []).map((s: any) => ({ label: s.label, value: s.value })),
+      colorCodes: (d.colorCodes || []).map((c: any) => ({ name: c.name, hex: c.hex })),
+      aiFilledAt: d.aiFilledAt || null,
       prices: (d.prices || []).map((x: any) => ({ currency: x.currency, variant: x.variant || null, variantKey: x.variantKey || '', median: x.median, shops: x.shops })),
       aliases: (d.aliases || []).length,
       photos,
@@ -93,7 +95,7 @@ export class DevicesService implements OnModuleInit {
   }
 
   private build(devices: any[]) {
-    const models: Record<string, Record<string, Array<{ id: string; name: string; variants?: string[]; colors?: string[]; specs?: { label: string; value: string }[]; prices?: { currency: string; variant: string | null; variantKey: string; median: number; shops: number }[]; photos: { imageId: string; color: string | null }[]; imageId: string | null }>>> = {};
+    const models: Record<string, Record<string, Array<{ id: string; name: string; variants?: string[]; colors?: string[]; specs?: { label: string; value: string }[]; colorCodes?: { name: string; hex: string }[]; prices?: { currency: string; variant: string | null; variantKey: string; median: number; shops: number }[]; photos: { imageId: string; color: string | null }[]; imageId: string | null }>>> = {};
     for (const d of devices) {
       const v = this.view(d);
       ((models[v.category] ??= {})[v.brand] ??= []).push({
@@ -102,6 +104,7 @@ export class DevicesService implements OnModuleInit {
         variants: v.variants.length ? v.variants : undefined,
         colors: v.colors.length ? v.colors : undefined,
         specs: v.specs.length ? v.specs : undefined,
+        colorCodes: v.colorCodes.length ? v.colorCodes : undefined,
         prices: v.prices.length ? v.prices : undefined,
         photos: v.photos,
         imageId: v.imageId,
@@ -327,6 +330,48 @@ export class DevicesService implements OnModuleInit {
     const { linked } = (await this.usage?.linkRequest(id, String(d._id))) ?? { linked: 0 };
     this.invalidate();
     return { device: await this.get(String(d._id)), linked };
+  }
+
+  /**
+   * Données de marché proposées par l'IA : elles ne remplissent que ce qui est vide (jamais d'écrasement de la saisie
+   * de l'admin), sauf les codes couleur, ajoutés aux coloris qui n'en ont pas. Renvoie les champs complétés.
+   */
+  async applyAiFacts(id: string, facts: { colors?: { name: string; hex?: string | null }[]; variants?: string[]; specs?: { label: string; value: string }[] }) {
+    const d = await this.doc(id);
+    const set: Record<string, unknown> = { aiFilledAt: new Date() };
+    const changed: string[] = [];
+    const hexOk = (h?: string | null) => (h && /^#[0-9a-f]{6}$/i.test(h) ? h.toLowerCase() : null);
+    const aiColors = (facts.colors || []).map((c) => ({ name: String(c?.name || '').trim().slice(0, 40), hex: hexOk(c?.hex) })).filter((c) => c.name).slice(0, 20);
+    let colors: string[] = d.colors || [];
+    if (!colors.length && aiColors.length) {
+      colors = clean(aiColors.map((c) => c.name));
+      set.colors = colors;
+      changed.push('coloris');
+    }
+    const codes: Array<{ name: string; hex: string }> = [...(d.colorCodes || [])];
+    for (const name of colors) {
+      if (codes.some((c) => imageKey(c.name) === imageKey(name))) continue;
+      const hex = aiColors.find((c) => imageKey(c.name) === imageKey(name))?.hex;
+      if (hex) codes.push({ name, hex });
+    }
+    if (codes.length !== (d.colorCodes || []).length) {
+      set.colorCodes = codes;
+      changed.push('codes couleur');
+    }
+    if (!(d.variants || []).length && facts.variants?.length) {
+      set.variants = clean(facts.variants.map((v) => String(v).slice(0, 60)));
+      changed.push('capacités');
+    }
+    if (!(d.specs || []).length && facts.specs?.length) {
+      const specs = cleanSpecs(facts.specs);
+      if (specs.length) {
+        set.specs = specs;
+        changed.push('fiche technique');
+      }
+    }
+    await this.model.updateOne({ _id: d._id }, { $set: set });
+    this.invalidate();
+    return changed;
   }
 
   /** Fiche technique de plusieurs appareils (contrat de vente) */

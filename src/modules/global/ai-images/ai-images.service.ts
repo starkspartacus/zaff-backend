@@ -17,7 +17,9 @@ export const PAGE_FETCHER = 'AI_PAGE_FETCHER';
 export interface JobInput {
   deviceIds?: string[];
   /** Sélection automatique : appareils sans photo, les plus utilisés par les boutiques d'abord */
-  selection?: 'missing-popular';
+  selection?: 'missing-popular' | 'incomplete';
+  /** `specs` : compléter les fiches (coloris officiels + codes couleur, capacités, fiche technique) */
+  kind?: 'photos' | 'specs';
   limit?: number;
   auto?: boolean;
   minScore?: number;
@@ -48,7 +50,8 @@ interface Verdict {
 const MAX_DOWNLOADS = 14;
 const MAX_REVIEWED = 10;
 const MIN_KEEP_SCORE = 55;
-const DEVICE_CONCURRENCY = 2;
+// Un appareil à la fois : les paliers gratuits des IA limitent le nombre de requêtes par minute
+const DEVICE_CONCURRENCY = 1;
 
 const VERDICT_SCHEMA = {
   type: 'OBJECT',
@@ -73,6 +76,37 @@ const VERDICT_SCHEMA = {
     },
   },
   required: ['images'],
+};
+
+const SPECS_BATCH = 6;
+
+interface SpecsFacts {
+  id: string;
+  known: boolean;
+  colors?: { name: string; hex?: string | null }[];
+  variants?: string[];
+  specs?: { label: string; value: string }[];
+}
+
+const SPECS_SCHEMA = {
+  type: 'OBJECT',
+  properties: {
+    devices: {
+      type: 'ARRAY',
+      items: {
+        type: 'OBJECT',
+        properties: {
+          id: { type: 'STRING' },
+          known: { type: 'BOOLEAN' },
+          colors: { type: 'ARRAY', items: { type: 'OBJECT', properties: { name: { type: 'STRING' }, hex: { type: 'STRING' } }, required: ['name'] } },
+          variants: { type: 'ARRAY', items: { type: 'STRING' } },
+          specs: { type: 'ARRAY', items: { type: 'OBJECT', properties: { label: { type: 'STRING' }, value: { type: 'STRING' } }, required: ['label', 'value'] } },
+        },
+        required: ['id', 'known'],
+      },
+    },
+  },
+  required: ['devices'],
 };
 
 const sooner = (a: Date | null, b: Date) => (!a || b.getTime() < a.getTime() ? b : a);
@@ -125,9 +159,20 @@ export class AiImagesService implements OnApplicationBootstrap {
 
   async createJob(input: JobInput) {
     if (!this.ai.enabled) throw new ServiceUnavailableException("L'IA n'est pas configurée : ajoutez GEMINI_API_KEY dans l'environnement du serveur.");
+    const kind = input.kind === 'specs' ? 'specs' : 'photos';
     let ids = [...new Set((input.deviceIds || []).filter((id) => Types.ObjectId.isValid(id)))];
     let label = ids.length === 1 ? null : `${ids.length} appareils choisis`;
-    if (!ids.length) {
+    if (!ids.length && kind === 'specs') {
+      // Fiches incomplètes (sans coloris, sans capacités ou sans fiche technique), les plus utilisées d'abord
+      const limit = Math.min(Math.max(input.limit || 25, 1), 200);
+      const { items } = await this.devices.list({ sort: 'popular', limit: 200 });
+      ids = items
+        .filter((d) => d.active && (!d.colors.length || !d.variants.length || !d.specs.length || d.colorCodes.length < d.colors.length))
+        .slice(0, limit)
+        .map((d) => d.id);
+      label = `Fiches de ${ids.length} appareils (coloris, capacités, fiche technique)`;
+    }
+    if (!ids.length && kind === 'photos') {
       const limit = Math.min(Math.max(input.limit || 20, 1), 200);
       // Appareils déjà en attente de validation : on ne les recherche pas une deuxième fois
       const waiting = new Set((await this.candidates.find({ status: 'pending' }).select('deviceId').lean().exec()).map((c: any) => c.deviceId));
@@ -135,12 +180,17 @@ export class AiImagesService implements OnApplicationBootstrap {
       ids = items.filter((d) => d.active && !waiting.has(d.id)).slice(0, limit).map((d) => d.id);
       label = `${ids.length} appareils sans photo (les plus utilisés d'abord)`;
     }
-    if (!ids.length) throw new BadRequestException('Aucun appareil à traiter : tous ont déjà une photo ou une proposition en attente.');
+    if (!ids.length) {
+      throw new BadRequestException(kind === 'specs' ? 'Toutes les fiches sont déjà complètes.' : 'Aucun appareil à traiter : tous ont déjà une photo ou une proposition en attente.');
+    }
+    if (ids.length === 1 && kind === 'specs') label = `Fiche de ${await this.devices.get(ids[0]).then((d) => `${d.brand} ${d.model}`).catch(() => '1 appareil')}`;
     if (ids.length === 1) label = label || (await this.devices.get(ids[0]).then((d) => `${d.brand} ${d.model}`).catch(() => '1 appareil'));
     const job = await this.jobs.create({
+      kind,
       status: 'queued',
       deviceIds: ids,
       doneIds: [],
+      log: [],
       processed: 0,
       found: 0,
       published: 0,
@@ -162,6 +212,7 @@ export class AiImagesService implements OnApplicationBootstrap {
   private jobView(j: any) {
     return {
       id: String(j._id),
+      kind: j.kind || 'photos',
       status: j.status,
       label: j.label,
       total: j.total,
@@ -173,6 +224,7 @@ export class AiImagesService implements OnApplicationBootstrap {
       auto: j.auto,
       minScore: j.minScore,
       lastError: j.lastError || null,
+      log: (j.log || []).slice(-40).reverse(),
       resumeAt: j.resumeAt || null,
       createdAt: j.createdAt,
       finishedAt: j.finishedAt || null,
@@ -229,18 +281,24 @@ export class AiImagesService implements OnApplicationBootstrap {
   }
 
   private async runJob(job: any) {
+    if (job.kind === 'specs') return this.runSpecsJob(job);
     const todo = (job.deviceIds as string[]).filter((id) => !(job.doneIds || []).includes(id));
     let stopped = false;
     const pause: { until: Date | null } = { until: null };
     await pool(todo, DEVICE_CONCURRENCY, async (deviceId) => {
       if (stopped || pause.until || (await this.isCancelled(job._id))) return void (stopped = stopped || !pause.until);
       const inc: Record<string, number> = { processed: 1 };
+      let name = deviceId;
+      const note = (result: 'found' | 'none' | 'error', detail: string) =>
+        this.jobs.updateOne({ _id: job._id }, { $push: { log: { deviceId, name, result, detail: detail.slice(0, 400), at: new Date() } } });
       try {
         const device = await this.devices.get(deviceId);
+        name = `${device.brand} ${device.model}`;
         const r = await this.findForDevice(device, job);
         inc.found = r.kept;
         inc.published = r.published;
         if (!r.kept) inc.notFound = 1;
+        await note(r.kept ? 'found' : 'none', r.detail);
       } catch (e: any) {
         // Quota gratuit épuisé partout : cet appareil sera repris avec le reste du lot
         if (e instanceof AiQuotaExceeded) {
@@ -249,6 +307,7 @@ export class AiImagesService implements OnApplicationBootstrap {
         }
         inc.failures = 1;
         this.logger.warn(`Photos IA (${deviceId}) : ${e.message}`);
+        await note('error', String(e.message));
         await this.jobs.updateOne({ _id: job._id }, { $set: { lastError: String(e.message).slice(0, 300) } });
         // Clé refusée / quota épuisé : inutile de continuer le lot
         if (e instanceof AiUnavailable) stopped = true;
@@ -266,6 +325,82 @@ export class AiImagesService implements OnApplicationBootstrap {
       return;
     }
     await this.jobs.updateOne({ _id: job._id }, { $set: { status: stopped ? 'failed' : 'done', finishedAt: new Date() } });
+  }
+
+  // ─── Complétion des fiches par l'IA (texte seulement : peu de quota, 6 appareils par requête) ───
+
+  private async runSpecsJob(job: any) {
+    const todo = (job.deviceIds as string[]).filter((id) => !(job.doneIds || []).includes(id));
+    let status: 'done' | 'failed' | 'paused' = 'done';
+    let resumeAt: Date | null = null;
+    for (let i = 0; i < todo.length; i += SPECS_BATCH) {
+      if (await this.isCancelled(job._id)) return;
+      const batch: Device[] = [];
+      for (const id of todo.slice(i, i + SPECS_BATCH)) {
+        const d = await this.devices.get(id).catch(() => null);
+        if (d) batch.push(d);
+      }
+      let facts: SpecsFacts[];
+      try {
+        facts = await this.askSpecs(batch);
+      } catch (e: any) {
+        if (e instanceof AiQuotaExceeded) {
+          status = 'paused';
+          resumeAt = e.resumeAt;
+          break;
+        }
+        await this.jobs.updateOne({ _id: job._id }, { $set: { lastError: String(e.message).slice(0, 300) } });
+        if (e instanceof AiUnavailable) {
+          status = 'failed';
+          break;
+        }
+        facts = [];
+      }
+      for (const d of batch) {
+        const f = facts.find((x) => x.id === d.id);
+        let changed: string[] = [];
+        if (f?.known) changed = await this.devices.applyAiFacts(d.id, f).catch(() => []);
+        const detail = !f ? "Pas de réponse de l'IA" : !f.known ? "Modèle inconnu de l'IA : rien n'a été inventé" : changed.length ? `Complété : ${changed.join(', ')}` : 'Déjà complet';
+        await this.jobs.updateOne(
+          { _id: job._id },
+          {
+            $inc: { processed: 1, found: changed.length ? 1 : 0, notFound: changed.length ? 0 : 1 },
+            $addToSet: { doneIds: d.id },
+            $push: { log: { deviceId: d.id, name: `${d.brand} ${d.model}`, result: changed.length ? 'found' : 'none', detail, at: new Date() } },
+          },
+        );
+      }
+    }
+    if (status === 'paused' && resumeAt) {
+      await this.jobs.updateOne(
+        { _id: job._id },
+        { $set: { status: 'paused', resumeAt, lastError: `Quota gratuit des IA atteint : reprise automatique vers ${resumeAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}.` } },
+      );
+      return;
+    }
+    await this.jobs.updateOne({ _id: job._id }, { $set: { status, finishedAt: new Date() } });
+  }
+
+  private async askSpecs(batch: Device[]): Promise<SpecsFacts[]> {
+    const list = batch.map((d) => `- id ${d.id} : ${d.brand} ${d.model} (${d.category})`).join('\n');
+    const res = await this.ai.generate({
+      temperature: 0,
+      schema: SPECS_SCHEMA,
+      parts: [
+        {
+          text: [
+            'You fill a product catalogue for phone / computer shops in West Africa (French-speaking).',
+            'For each device below give the facts sold on the market: official colours (official marketing name, in French when the',
+            'brand sells it under a French name, with the closest hex colour code), storage / RAM configurations actually sold',
+            '(format "128 Go", "8 Go + 256 Go", "16 Go / 512 Go SSD"), and up to 8 key specs with French labels',
+            '(Écran, Processeur, Mémoire vive, Stockage, Appareil photo, Batterie, Système, Réseau…) and short French values.',
+            'If you do not know this exact model for sure, set known=false and leave every list empty: NEVER invent.',
+            `Devices:\n${list}`,
+          ].join('\n'),
+        },
+      ],
+    });
+    return parseJsonLoose<{ devices?: SpecsFacts[] }>(res.text)?.devices || [];
   }
 
   // ─── Recherche pour un appareil ───
@@ -288,12 +423,12 @@ export class AiImagesService implements OnApplicationBootstrap {
     } catch (e) {
       if (!(e instanceof AiQuotaExceeded)) throw e;
       // Recherche Google épuisée : photos libres de Wikimedia Commons (gratuit, sans clé, auteur et licence gardés)
-      return { images: await this.commons(device), pages: [] as string[] };
+      return { images: await this.commons(device), pages: [] as string[], via: 'commons' as const };
     }
     const json = parseJsonLoose<{ images?: { url?: string; page?: string; color?: string | null }[]; pages?: string[] }>(res.text) || {};
     const images: Array<{ url?: string; page?: string; color?: string | null; credit?: string | null }> = (json.images || []).filter((i) => typeof i?.url === 'string').slice(0, 10);
     const pages = [...new Set([...(json.pages || []), ...images.map((i) => i.page || ''), ...res.sources.map((s) => s.uri)].filter((p) => typeof p === 'string' && /^https?:\/\//.test(p)))].slice(0, 6);
-    return { images, pages };
+    return { images, pages, via: 'ia' as const };
   }
 
   private async commons(device: Device) {
@@ -307,8 +442,8 @@ export class AiImagesService implements OnApplicationBootstrap {
 
   private readonly credits = new Map<string, string>();
 
-  private async collectUrls(device: Device) {
-    const { images, pages } = await this.searchSources(device);
+  private async collectUrls(device: Device, forceCommons = false) {
+    const { images, pages, via } = forceCommons ? { images: await this.commons(device), pages: [] as string[], via: 'commons' as const } : await this.searchSources(device);
     const urls = new Map<string, string | null>(); // photo → page d'origine
     for (const i of images) {
       if (!/^https?:\/\//.test(i.url!)) continue;
@@ -325,25 +460,32 @@ export class AiImagesService implements OnApplicationBootstrap {
         /* page inaccessible : on passe */
       }
     });
-    return [...urls.entries()].slice(0, MAX_DOWNLOADS);
+    return { list: [...urls.entries()].slice(0, MAX_DOWNLOADS), via, pages: pages.length };
   }
 
   private async downloadAll(list: [string, string | null][]) {
     const out: Array<{ url: string; page: string | null; img: NormalizedImage; sha256: string; credit: string | null }> = [];
     const seen = new Set<string>();
-    await pool(list, 4, async ([url, page]) => {
+    const refused = new Map<string, number>();
+    const throttled = new Set<string>(); // sites qui ont répondu 429 : on n'insiste pas
+    await pool(list, 2, async ([url, page]) => {
+      const host = domainOf(url) || '';
+      if (throttled.has(host)) return void refused.set('site saturé', (refused.get('site saturé') || 0) + 1);
       try {
-        const res = await this.fetcher(url, { maxBytes: 8_000_000, timeoutMs: 12000, accept: 'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8' });
+        const res = await this.fetcher(url, { maxBytes: 8_000_000, timeoutMs: 12000, accept: 'image/avif,image/webp,image/png,image/jpeg,image/*;q=0.8', referer: page });
         const img = await normalizeProductImage(res.buffer);
         const sha256 = createHash('sha256').update(img.full).digest('hex');
         if (seen.has(sha256)) return;
         seen.add(sha256);
         out.push({ url: res.url, page, img, sha256, credit: this.credits.get(url) || null });
       } catch (e) {
-        if (!(e instanceof ImageRejected)) this.logger.debug?.(`Téléchargement refusé ${url} : ${(e as Error).message}`);
+        const msg = (e as Error).message || 'erreur';
+        if (/HTTP 429/.test(msg)) throttled.add(host);
+        const reason = e instanceof ImageRejected ? msg.replace(/\s*\(.*\)$/, '') : msg.slice(0, 40);
+        refused.set(reason, (refused.get(reason) || 0) + 1);
       }
     });
-    return out.slice(0, MAX_REVIEWED);
+    return { imgs: out.slice(0, MAX_REVIEWED), refused };
   }
 
   private async review(device: Device, imgs: Array<{ img: NormalizedImage }>): Promise<Verdict[]> {
@@ -377,9 +519,22 @@ export class AiImagesService implements OnApplicationBootstrap {
   }
 
   async findForDevice(device: Device, job: { _id: unknown; auto: boolean; minScore: number; perDevice: number }) {
-    const urls = await this.collectUrls(device);
-    const imgs = await this.downloadAll(urls);
-    if (!imgs.length) return { kept: 0, published: 0 };
+    let found = await this.collectUrls(device);
+    let dl = await this.downloadAll(found.list);
+    const notes: string[] = [];
+    const describe = (f: typeof found, d: typeof dl) => {
+      const refusals = [...d.refused.entries()].map(([r, n]) => `${r} ×${n}`).join(', ');
+      return `${f.via === 'commons' ? 'Wikimedia' : 'Recherche IA'} : ${f.list.length} photo(s) repérée(s)${f.pages ? ` dans ${f.pages} page(s)` : ''}, ${d.imgs.length} utilisable(s)${refusals ? ` (refus : ${refusals})` : ''}`;
+    };
+    notes.push(describe(found, dl));
+    // Sites des fabricants inaccessibles : on tente les photos libres de Wikimedia
+    if (!dl.imgs.length && found.via === 'ia') {
+      found = await this.collectUrls(device, true);
+      dl = await this.downloadAll(found.list);
+      notes.push(describe(found, dl));
+    }
+    const imgs = dl.imgs;
+    if (!imgs.length) return { kept: 0, published: 0, detail: notes.join(' · ') };
     const verdicts = await this.review(device, imgs);
 
     // Score final : celui de l'IA, pénalisé si texte / fond chargé / vue de profil
@@ -431,7 +586,9 @@ export class AiImagesService implements OnApplicationBootstrap {
         if (r?.status === 'published') published++;
       }
     }
-    return { kept: chosen.length, published };
+    const rejected = verdicts.filter((v) => !v.sameModel).length;
+    notes.push(`Vérification : ${chosen.length} retenue(s) sur ${imgs.length}${rejected ? `, ${rejected} autre modèle` : ''}`);
+    return { kept: chosen.length, published, detail: notes.join(' · ') };
   }
 
   // ─── Propositions ───

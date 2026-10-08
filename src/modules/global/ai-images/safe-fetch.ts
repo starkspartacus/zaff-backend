@@ -70,7 +70,14 @@ export interface SafeFetchOptions {
   timeoutMs?: number;
   accept?: string;
   maxRedirects?: number;
+  /** Page d'où vient l'image (certains sites refusent une image demandée sans elle) */
+  referer?: string | null;
 }
+
+/** Wikimedia exige un robot identifié (sinon 429) ; les autres sites reçoivent un navigateur classique */
+const BOT_UA = 'ZAFF-catalogue/1.0 (https://github.com/starkspartacus/zaff-backend; photos produit du catalogue) node-https';
+const BROWSER_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
+const userAgentFor = (host: string) => (/(^|\.)(wikimedia|wikipedia)\.org$/i.test(host) ? BOT_UA : BROWSER_UA);
 
 export function safeFetch(rawUrl: string, opts: SafeFetchOptions): Promise<FetchResult> {
   const { maxBytes, timeoutMs = 10_000, accept = '*/*', maxRedirects = 3 } = opts;
@@ -92,7 +99,12 @@ export function safeFetch(rawUrl: string, opts: SafeFetchOptions): Promise<Fetch
       {
         lookup: safeLookup,
         timeout: timeoutMs,
-        headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ZAFF-catalogue/1.0)', Accept: accept, 'Accept-Language': 'fr,en;q=0.8' },
+        headers: {
+          'User-Agent': userAgentFor(url.hostname),
+          Accept: accept,
+          'Accept-Language': 'fr,en;q=0.8',
+          ...(opts.referer && /^https?:\/\//.test(opts.referer) ? { Referer: opts.referer } : {}),
+        },
       },
       (res) => {
         const status = res.statusCode || 0;

@@ -14,6 +14,10 @@ export class AiImageJob {
   @Prop({ default: null })
   resumeAt: Date;
 
+  /** `photos` : recherche de photos ; `specs` : complétion des fiches (coloris, capacités, fiche technique) */
+  @Prop({ default: 'photos', enum: ['photos', 'specs'] })
+  kind: 'photos' | 'specs';
+
   @Prop({ type: [String], default: [] })
   deviceIds: string[];
 
@@ -58,6 +62,10 @@ export class AiImageJob {
 
   @Prop({ default: null })
   lastError: string;
+
+  /** Journal par appareil (résultat et raison : sites refusés, photos rejetées…) pour comprendre « sans résultat » */
+  @Prop({ type: [Object], default: [] })
+  log: Array<{ deviceId: string; name: string; result: 'found' | 'none' | 'error'; detail: string; at: Date }>;
 
   @Prop({ default: null })
   finishedAt: Date;

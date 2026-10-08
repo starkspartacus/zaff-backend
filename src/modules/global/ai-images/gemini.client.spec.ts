@@ -1,4 +1,4 @@
-import { GeminiClient, AiUnavailable, AiQuotaExceeded } from './gemini.client';
+import { GeminiClient, AiUnavailable, AiQuotaExceeded, parseGoogleQuota } from './gemini.client';
 
 const config = (model?: string, extra: Record<string, unknown> = {}) =>
   ({ get: (k: string) => ({ 'ai.geminiApiKey': 'cle-de-test-suffisamment-longue', 'ai.geminiModel': model ?? null, 'ai.geminiRpm': 1000, ...extra } as Record<string, unknown>)[k] }) as any;
@@ -98,5 +98,12 @@ describe('Client Gemini', () => {
     expect(err).toBeInstanceOf(AiQuotaExceeded);
     expect(err.resumeAt.getTime()).toBeGreaterThan(t + 590_000);
     expect(Date.now() - t).toBeLessThan(3000);
+  });
+
+  it('lecture des refus de Google : délai annoncé dans le message, « limit: 0 » = aucun quota gratuit', () => {
+    const msg = (m: string) => ({ error: { message: m, details: [] } });
+    expect(parseGoogleQuota(msg('Quota exceeded for metric: free_tier_requests, limit: 10, model: gemini-3.8-flash. Please retry in 22.8s.'))).toMatchObject({ retryMs: 23300, daily: false });
+    expect(parseGoogleQuota(msg('Quota exceeded for metric: grounding_requests, limit: 0, model: gemini-3.8-flash'))).toMatchObject({ retryMs: 24 * 3600 * 1000, daily: true });
+    expect(parseGoogleQuota(msg('Quota exceeded: requests per day')).daily).toBe(true);
   });
 });

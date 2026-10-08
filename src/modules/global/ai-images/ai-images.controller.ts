@@ -9,7 +9,8 @@ import { AiImagesService } from './ai-images.service';
 
 class JobDto {
   @IsOptional() @IsArray() @ArrayMaxSize(200) @Matches(/^[a-f0-9]{24}$/, { each: true }) deviceIds?: string[];
-  @IsOptional() @IsIn(['missing-popular']) selection?: 'missing-popular';
+  @IsOptional() @IsIn(['missing-popular', 'incomplete']) selection?: 'missing-popular' | 'incomplete';
+  @IsOptional() @IsIn(['photos', 'specs']) kind?: 'photos' | 'specs';
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(200) limit?: number;
   @IsOptional() @IsBoolean() auto?: boolean;
   @IsOptional() @Type(() => Number) @IsInt() @Min(50) @Max(100) minScore?: number;
