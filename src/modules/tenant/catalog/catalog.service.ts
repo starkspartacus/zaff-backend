@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException, ConflictException, NotFoundException, Optional } from '@nestjs/common';
 import { ImagesService } from '../../global/images/images.service';
+import { DeviceUsageService } from '../../global/devices/device-usage.service';
 import { TenantConnectionService } from '../../../database/tenant-connection.service';
 import { Category, CategorySchema } from '../common/schemas/category.schema';
 import { Brand, BrandSchema } from '../common/schemas/brand.schema';
@@ -12,7 +13,15 @@ export class CatalogService {
   constructor(
     private readonly tenantConnectionService: TenantConnectionService,
     @Optional() private readonly images?: ImagesService,
+    @Optional() private readonly deviceUsage?: DeviceUsageService,
   ) {}
+
+  /** Relie le produit au catalogue global en arrière-plan (comptage, demande d'ajout, photo officielle) */
+  private track(db: string, product: any) {
+    if (!this.deviceUsage || !product) return;
+    const p = typeof product.toObject === 'function' ? product.toObject() : product;
+    void this.deviceUsage.track(db, p);
+  }
 
   private getCategoryModel(db: string) { return this.tenantConnectionService.getModel<Category>(db, Category.name, CategorySchema); }
   private getBrandModel(db: string) { return this.tenantConnectionService.getModel<Brand>(db, Brand.name, BrandSchema); }
@@ -81,12 +90,15 @@ export class CatalogService {
     const stockQuantity = dto.hasSerialNumbers ? 0 : dto.stockQuantity || 0;
     // La photo est rattachée au produit (elle n'est plus « en attente ») ; si le produit échoue, elle est libérée
     await this.images?.attach(dto.imageId);
+    let created;
     try {
-      return await model.create({ ...dto, sku, barcode: dto.barcode?.trim() || null, stockQuantity });
+      created = await model.create({ ...dto, sku, barcode: dto.barcode?.trim() || null, stockQuantity });
     } catch (e) {
       await this.images?.release(dto.imageId);
       throw e;
     }
+    this.track(db, created);
+    return created;
   }
 
   async updateProduct(db: string, id: string, dto: Partial<CreateProductDto>) {
@@ -123,6 +135,7 @@ export class CatalogService {
       throw e;
     }
     if (imageChanged) await this.images?.release(previousImage);
+    this.track(db, saved);
     return saved;
   }
 

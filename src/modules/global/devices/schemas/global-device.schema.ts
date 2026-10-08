@@ -14,6 +14,16 @@ export class DevicePhoto {
   color: string;
 }
 
+/** Ligne de la fiche technique (« Écran » : « 6,6" AMOLED 120 Hz ») */
+@Schema({ _id: false })
+export class DeviceSpec {
+  @Prop({ required: true, trim: true })
+  label: string;
+
+  @Prop({ required: true, trim: true })
+  value: string;
+}
+
 /**
  * Catalogue global des appareils (base globale), géré par l'administrateur de la plateforme :
  * chaque appareil a ses capacités, coloris et photos conformes ; toutes les boutiques s'en servent
@@ -49,6 +59,18 @@ export class GlobalDevice {
   /** Photo affichée par défaut (sinon la première) */
   @Prop({ default: null })
   defaultImageId: string;
+
+  /** Fiche technique officielle (affichée dans la Vitrine et la fiche produit des boutiques) */
+  @Prop({ type: [DeviceSpec], default: [] })
+  specs: DeviceSpec[];
+
+  /** Bases des boutiques qui ont ce modèle en catalogue (jamais renvoyé : sert à compter et à leur transmettre les photos) */
+  @Prop({ type: [String], default: [] })
+  shops: string[];
+
+  /** Nombre de boutiques (tri « les plus utilisés d'abord ») */
+  @Prop({ default: 0, index: true })
+  shopCount: number;
 
   /** Masqué des boutiques (ancien modèle, doublon…) sans être supprimé */
   @Prop({ default: true, index: true })

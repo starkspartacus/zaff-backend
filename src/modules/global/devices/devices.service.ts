@@ -1,10 +1,12 @@
-import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, NotFoundException, OnModuleInit, Optional } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { GLOBAL_CONNECTION } from '../../../database/database.constants';
 import { CATEGORY_PROFILES, DEFAULT_PROFILE, DEVICE_MODELS } from '../../../common/catalog/device-catalog';
 import { ImagesService, imageKey, modelKeyOf } from '../images/images.service';
 import { GlobalDevice, GlobalDeviceDocument } from './schemas/global-device.schema';
+import { DeviceRequest, DeviceRequestDocument } from './schemas/device-request.schema';
+import { DeviceUsageService } from './device-usage.service';
 
 export interface DeviceInput {
   category: string;
@@ -12,6 +14,7 @@ export interface DeviceInput {
   model: string;
   variants?: string[];
   colors?: string[];
+  specs?: { label: string; value: string }[];
   active?: boolean;
 }
 
@@ -19,6 +22,11 @@ type UploadFile = { buffer: Buffer; size: number };
 const ADMIN = { establishmentId: null, establishmentName: 'ZAFF', name: 'Administrateur ZAFF' };
 const CACHE_MS = 5 * 60 * 1000;
 const clean = (list?: string[]) => [...new Set((list || []).map((v) => v.trim()).filter(Boolean))].slice(0, 40);
+const cleanSpecs = (list?: { label: string; value: string }[]) =>
+  (list || [])
+    .map((s) => ({ label: String(s?.label || '').trim().slice(0, 40), value: String(s?.value || '').trim().slice(0, 160) }))
+    .filter((s) => s.label && s.value)
+    .slice(0, 30);
 const escapeRegex = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
@@ -33,6 +41,8 @@ export class DevicesService implements OnModuleInit {
   constructor(
     @InjectModel(GlobalDevice.name, GLOBAL_CONNECTION) private readonly model: Model<GlobalDeviceDocument>,
     private readonly images: ImagesService,
+    @Optional() @InjectModel(DeviceRequest.name, GLOBAL_CONNECTION) private readonly requests?: Model<DeviceRequestDocument>,
+    @Optional() private readonly usage?: DeviceUsageService,
   ) {}
 
   /** Premier démarrage : le catalogue est rempli avec les appareils connus de ZAFF (sans photos) */
@@ -71,15 +81,17 @@ export class DevicesService implements OnModuleInit {
       model: d.model,
       variants: d.variants || [],
       colors: d.colors || [],
+      specs: (d.specs || []).map((s: any) => ({ label: s.label, value: s.value })),
       photos,
       imageId: d.defaultImageId || photos[0]?.imageId || null,
       active: d.active !== false,
+      shops: d.shopCount || 0,
       updatedAt: d.updatedAt || d.createdAt || null,
     };
   }
 
   private build(devices: any[]) {
-    const models: Record<string, Record<string, Array<{ id: string; name: string; variants?: string[]; colors?: string[]; photos: { imageId: string; color: string | null }[]; imageId: string | null }>>> = {};
+    const models: Record<string, Record<string, Array<{ id: string; name: string; variants?: string[]; colors?: string[]; specs?: { label: string; value: string }[]; photos: { imageId: string; color: string | null }[]; imageId: string | null }>>> = {};
     for (const d of devices) {
       const v = this.view(d);
       ((models[v.category] ??= {})[v.brand] ??= []).push({
@@ -87,6 +99,7 @@ export class DevicesService implements OnModuleInit {
         name: v.model,
         variants: v.variants.length ? v.variants : undefined,
         colors: v.colors.length ? v.colors : undefined,
+        specs: v.specs.length ? v.specs : undefined,
         photos: v.photos,
         imageId: v.imageId,
       });
@@ -105,7 +118,7 @@ export class DevicesService implements OnModuleInit {
 
   // ─── Administration ───
 
-  async list(q: { search?: string; category?: string; brand?: string; photos?: 'missing' | 'with'; page?: number; limit?: number }) {
+  async list(q: { search?: string; category?: string; brand?: string; photos?: 'missing' | 'with'; sort?: 'name' | 'popular'; page?: number; limit?: number }) {
     const filter: Record<string, unknown> = {};
     if (q.category) filter.category = q.category;
     if (q.brand) filter.brandKey = imageKey(q.brand);
@@ -113,14 +126,17 @@ export class DevicesService implements OnModuleInit {
     let docs = await this.model.find(filter).sort({ brand: 1, model: 1 }).lean().exec();
     if (q.photos === 'missing') docs = docs.filter((d: any) => !(d.photos || []).length);
     if (q.photos === 'with') docs = docs.filter((d: any) => (d.photos || []).length);
+    // « Les plus utilisés d'abord » : l'admin photographie en priorité les appareils présents dans le plus de boutiques
+    if (q.sort === 'popular') docs = [...docs].sort((a: any, b: any) => (b.shopCount || 0) - (a.shopCount || 0));
     const limit = Math.min(q.limit || 60, 200);
     const page = Math.max(1, q.page || 1);
     return { total: docs.length, page, limit, items: docs.slice((page - 1) * limit, page * limit).map((d) => this.view(d)) };
   }
 
   async stats() {
-    const docs: any[] = await this.model.find({}).select('photos active brand category').lean().exec();
+    const docs: any[] = await this.model.find({}).select('photos active brand category shopCount').lean().exec();
     const withPhotos = docs.filter((d) => (d.photos || []).length).length;
+    const used = docs.filter((d) => (d.shopCount || 0) > 0);
     const reported = (await this.images.reported()).length;
     return {
       devices: docs.length,
@@ -130,6 +146,9 @@ export class DevicesService implements OnModuleInit {
       photos: docs.reduce((t, d) => t + (d.photos || []).length, 0),
       brands: new Set(docs.map((d) => d.brand)).size,
       reported,
+      usedDevices: used.length,
+      usedWithPhotos: used.filter((d) => (d.photos || []).length).length,
+      requests: this.requests ? await this.requests.countDocuments({ status: 'open' }) : 0,
     };
   }
 
@@ -168,6 +187,7 @@ export class DevicesService implements OnModuleInit {
       modelKey: modelKeyOf(dto.brand, dto.model),
       variants: clean(dto.variants),
       colors: clean(dto.colors),
+      specs: cleanSpecs(dto.specs),
       photos: [],
       active: dto.active !== false,
     });
@@ -185,6 +205,7 @@ export class DevicesService implements OnModuleInit {
     if (dto.category !== undefined) set.category = dto.category;
     if (dto.variants !== undefined) set.variants = clean(dto.variants);
     if (dto.colors !== undefined) set.colors = clean(dto.colors);
+    if (dto.specs !== undefined) set.specs = cleanSpecs(dto.specs);
     if (dto.active !== undefined) set.active = dto.active;
     const updated = await this.model.findOneAndUpdate({ _id: id }, { $set: set }, { new: true }).lean().exec();
     this.invalidate();
@@ -215,6 +236,8 @@ export class DevicesService implements OnModuleInit {
       );
     }
     this.invalidate();
+    // Les produits des boutiques qui n'ont pas encore de photo la reçoivent (en arrière-plan)
+    this.usage?.propagate(id).catch((e) => this.logger.warn(`Transmission de la photo : ${e.message}`));
     return { device: await this.get(id), image: img };
   }
 
@@ -244,5 +267,66 @@ export class DevicesService implements OnModuleInit {
     const r = await this.images.adminRemove(imageId);
     this.invalidate();
     return r;
+  }
+
+  // ─── Demandes d'ajout (modèles saisis par les boutiques, absents du catalogue) ───
+
+  private requestView(r: any) {
+    return {
+      id: String(r._id),
+      category: r.category || null,
+      brand: r.brand,
+      model: r.model,
+      colors: r.colors || [],
+      variants: r.variants || [],
+      shops: r.shopCount || 0,
+      status: r.status,
+      deviceId: r.deviceId || null,
+      lastSeenAt: r.lastSeenAt || r.updatedAt || null,
+    };
+  }
+
+  async requestsList(status: 'open' | 'added' | 'dismissed' = 'open') {
+    if (!this.requests) return [];
+    const docs = await this.requests.find({ status }).sort({ shopCount: -1 }).limit(300).lean().exec();
+    return docs.map((r) => this.requestView(r));
+  }
+
+  private async requestDoc(id: string): Promise<any> {
+    if (!this.requests || !Types.ObjectId.isValid(id)) throw new NotFoundException('Demande introuvable.');
+    const r = await this.requests.findById(id).lean().exec();
+    if (!r) throw new NotFoundException('Demande introuvable.');
+    return r;
+  }
+
+  /** Ajout au catalogue (fiche éventuellement corrigée par l'admin) ; les produits des boutiques y sont rattachés */
+  async acceptRequest(id: string, dto: DeviceInput) {
+    const r = await this.requestDoc(id);
+    this.validate(dto);
+    const existing: any = await this.model.findOne({ brandKey: imageKey(dto.brand), modelKey: modelKeyOf(dto.brand, dto.model) }).lean().exec();
+    const device = existing ? this.view(existing) : await this.create(dto);
+    await this.requests!.updateOne({ _id: r._id }, { $set: { status: 'added', deviceId: device.id } });
+    const { linked } = (await this.usage?.linkRequest(id, device.id)) ?? { linked: 0 };
+    this.invalidate();
+    return { device: await this.get(device.id), linked };
+  }
+
+  async dismissRequest(id: string) {
+    const r = await this.requestDoc(id);
+    await this.requests!.updateOne({ _id: r._id }, { $set: { status: 'dismissed' } });
+    return { dismissed: true };
+  }
+
+  async reopenRequest(id: string) {
+    const r = await this.requestDoc(id);
+    await this.requests!.updateOne({ _id: r._id }, { $set: { status: 'open' } });
+    return { reopened: true };
+  }
+
+  async sync() {
+    if (!this.usage) return null;
+    const result = await this.usage.sync();
+    this.invalidate();
+    return result;
   }
 }

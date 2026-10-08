@@ -2,11 +2,16 @@ import { Body, Controller, Delete, Get, Header, HttpCode, Param, Patch, Post, Pu
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Transform, Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsInt, IsOptional, IsString, Matches, Max, MaxLength, Min, ValidateNested } from 'class-validator';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { PlatformAdminGuard } from '../platform/platform.guard';
 import { ImagesService, MAX_IMAGE_BYTES } from '../images/images.service';
 import { DevicesService } from './devices.service';
+
+class SpecDto {
+  @IsString() @MaxLength(40) label: string;
+  @IsString() @MaxLength(160) value: string;
+}
 
 class DeviceDto {
   @Matches(/^[a-z0-9-]{2,60}$/) category: string;
@@ -14,6 +19,7 @@ class DeviceDto {
   @IsString() @MaxLength(120) model: string;
   @IsOptional() @IsArray() @ArrayMaxSize(40) @IsString({ each: true }) @MaxLength(60, { each: true }) variants?: string[];
   @IsOptional() @IsArray() @ArrayMaxSize(40) @IsString({ each: true }) @MaxLength(60, { each: true }) colors?: string[];
+  @IsOptional() @IsArray() @ArrayMaxSize(30) @ValidateNested({ each: true }) @Type(() => SpecDto) specs?: SpecDto[];
   @IsOptional() @IsBoolean() active?: boolean;
 }
 
@@ -23,6 +29,7 @@ class DeviceUpdateDto {
   @IsOptional() @IsString() @MaxLength(120) model?: string;
   @IsOptional() @IsArray() @ArrayMaxSize(40) @IsString({ each: true }) @MaxLength(60, { each: true }) variants?: string[];
   @IsOptional() @IsArray() @ArrayMaxSize(40) @IsString({ each: true }) @MaxLength(60, { each: true }) colors?: string[];
+  @IsOptional() @IsArray() @ArrayMaxSize(30) @ValidateNested({ each: true }) @Type(() => SpecDto) specs?: SpecDto[];
   @IsOptional() @IsBoolean() active?: boolean;
 }
 
@@ -31,6 +38,7 @@ class DeviceQueryDto {
   @IsOptional() @IsString() @MaxLength(60) category?: string;
   @IsOptional() @IsString() @MaxLength(80) brand?: string;
   @IsOptional() @IsIn(['missing', 'with']) photos?: 'missing' | 'with';
+  @IsOptional() @IsIn(['name', 'popular']) sort?: 'name' | 'popular';
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(200) limit?: number;
 }
@@ -95,6 +103,13 @@ export class PlatformDevicesController {
     return this.devices.removeReportedPhoto(imageId);
   }
 
+  @Post('sync')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Recalcul : boutiques par appareil, demandes d\'ajout, photos transmises aux produits' })
+  sync() {
+    return this.devices.sync();
+  }
+
   @Get('usage')
   usage() {
     return this.images.usage(null);
@@ -144,5 +159,42 @@ export class PlatformDevicesController {
   @Delete(':id/photos/:imageId')
   removePhoto(@Param('id') id: string, @Param('imageId') imageId: string) {
     return this.devices.removePhoto(id, imageId);
+  }
+}
+
+class RequestQueryDto {
+  @IsOptional() @IsIn(['open', 'added', 'dismissed']) status?: 'open' | 'added' | 'dismissed';
+}
+
+/** Modèles saisis par les boutiques et absents du catalogue (demandes d'ajout automatiques) */
+@ApiTags('Plateforme - Catalogue global des appareils')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, PlatformAdminGuard)
+@Controller('platform/device-requests')
+export class PlatformDeviceRequestsController {
+  constructor(private readonly devices: DevicesService) {}
+
+  @Get()
+  list(@Query() q: RequestQueryDto) {
+    return this.devices.requestsList(q.status);
+  }
+
+  @Post(':id/accept')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Ajouter le modèle au catalogue ; les produits des boutiques concernées y sont rattachés' })
+  accept(@Param('id') id: string, @Body() dto: DeviceDto) {
+    return this.devices.acceptRequest(id, dto);
+  }
+
+  @Post(':id/dismiss')
+  @HttpCode(200)
+  dismiss(@Param('id') id: string) {
+    return this.devices.dismissRequest(id);
+  }
+
+  @Post(':id/reopen')
+  @HttpCode(200)
+  reopen(@Param('id') id: string) {
+    return this.devices.reopenRequest(id);
   }
 }

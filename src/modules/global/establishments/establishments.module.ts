@@ -15,6 +15,6 @@ import { RegistrationService } from './registration.service';
   ],
   controllers: [EstablishmentsController],
   providers: [EstablishmentsService, RegistrationService],
-  exports: [EstablishmentsService],
+  exports: [EstablishmentsService, MongooseModule],
 })
 export class EstablishmentsModule {}

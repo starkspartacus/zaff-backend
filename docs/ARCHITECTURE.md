@@ -20,6 +20,8 @@ Priorité absolue : une expérience simple et compréhensible (UI et messages d'
 - `reference_categories` : catalogue de référence (catégories + marques usuelles), seedé au démarrage, en cache 10 min.
 - `global_devices` : **catalogue global des appareils** (catégorie, marque, modèle, capacités, coloris, photos par coloris,
   photo par défaut), tenu par l'administrateur de la plateforme, seedé au 1er démarrage depuis `device-catalog.ts`.
+- `device_requests` : **demandes d'ajout** — modèles saisis par des boutiques et absents du catalogue (une par marque + modèle,
+  nombre de boutiques, coloris / capacités vus, statut `open | added | dismissed`).
 - `super_admins` : réservé (l'administrateur de la plateforme se connecte avec les identifiants de l'environnement).
 
 **Une base par boutique** `zaff_tenant_<slug>` (via `TenantConnectionService.getModel(db, name, schema)`) :
@@ -120,6 +122,19 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   `POST /:id/photos` (multipart `file` + `thumb` + `color?`), `PATCH /:id/photos/:imageId/default`, `DELETE /:id/photos/:imageId`,
   `reports` (photos signalées / masquées) avec `keep` et suppression, `usage` (stockage).
 - Un produit de boutique garde `deviceId` (appareil global) et `imageId` (photo choisie parmi celles de l'appareil).
+  Attention : dans un produit, le modèle est dans **`name`** (« Samsung Galaxy A55 5G ») et `model` = capacité (« 256 Go »).
+- **Fiche technique** `specs [{ label, value }]` (≤ 30 lignes) saisie par l'admin, renvoyée dans le catalogue des boutiques.
+- **Lien produits ↔ catalogue** (`DeviceUsageService`, ne bloque jamais l'enregistrement d'un produit, appelé en arrière-plan
+  par `CatalogService` après création / modification) :
+  - appareil reconnu (par `deviceId`, sinon marque + `name` normalisés) → `deviceId` posé, boutique ajoutée à `shops`
+    (bases, **jamais renvoyées**) / `shopCount` ; produit sans photo → photo de son coloris (sinon par défaut) rattachée ;
+  - modèle inconnu → demande d'ajout (`device_requests`) ; `POST /platform/device-requests/:id/accept` crée l'appareil
+    (fiche corrigée par l'admin), rattache les produits des boutiques concernées ; `dismiss`, `reopen` ;
+  - photo ajoutée par l'admin → `propagate` : les produits **sans photo** de cet appareil la reçoivent (jamais de
+    remplacement d'une photo déjà choisie) + `data:invalidate products` vers la boutique ;
+  - **recalcul complet** `sync()` toutes les 6 h et `POST /platform/devices/sync` (bouton « Mettre à jour ») : anciens produits
+    rattachés, produits supprimés décomptés, demandes sans boutique retirées, photos manquantes transmises.
+- Tri `GET /platform/devices?sort=popular` (les plus utilisés d'abord) ; `stats` : `usedDevices`, `usedWithPhotos`, `requests`.
 
 ## Images produits partagées (`/global/images`) — UploadThing, sans fichier orphelin
 - **Stockage** (`media-storage.ts`, jeton `MEDIA_STORAGE`) : **UploadThing** si `UPLOADTHING_TOKEN` est défini (envoi

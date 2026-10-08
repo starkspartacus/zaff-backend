@@ -14,6 +14,7 @@ import { AppModule } from '../src/app.module';
 import { GLOBAL_CONNECTION } from '../src/database/database.constants';
 import { DirectoryService } from '../src/modules/global/directory/directory.service';
 import { TenantConnectionService } from '../src/database/tenant-connection.service';
+import { DevicesService } from '../src/modules/global/devices/devices.service';
 import { FakeModel, fakeTenantConnection } from '../src/testing/fake-model';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
 import { TransformInterceptor } from '../src/common/interceptors/transform.interceptor';
@@ -34,7 +35,7 @@ const tenantService = {
   getTenantConnection: () => ({}),
   getGlobalConnection: () => ({}),
 };
-const global = { Establishment: new FakeModel(['slug']), UserDirectory: new FakeModel(), ReferenceCategory: new FakeModel(['slug']), CatalogImage: new FakeModel(['sha256']), GlobalDevice: new FakeModel() };
+const global = { Establishment: new FakeModel(['slug']), UserDirectory: new FakeModel(), ReferenceCategory: new FakeModel(['slug']), CatalogImage: new FakeModel(['sha256']), GlobalDevice: new FakeModel(), DeviceRequest: new FakeModel() };
 const fakeConnection: any = { model: () => new FakeModel(), models: {}, useDb: () => fakeConnection, close: async () => undefined };
 
 (async () => {
@@ -74,6 +75,12 @@ const fakeConnection: any = { model: () => new FakeModel(), models: {}, useDb: (
   });
   await app.get(UnitsService).addUnits(db, { productId: String(iphone._id), serialNumbers: ['IMEI0001', 'IMEI0002', 'IMEI0003', 'IMEI0004'] }, { userId: String(storekeeper._id), name: 'Koné' });
   void owner;
+  // Modèle absent du catalogue global : apparaît dans les demandes d'ajout de l'administrateur
+  await products.create({
+    name: 'Tecno Pova Slim 5G', sku: 'TEC-POVA-SLIM', category: 'smartphones', brand: 'Tecno', model: '256 Go', color: 'Bleu',
+    purchasePrice: 120000, salePrice: 150000, stockQuantity: 0, minStockAlert: 1, hasSerialNumbers: true,
+  });
+  console.log('Catalogue global :', JSON.stringify(await app.get(DevicesService).sync()));
 
   const port = Number(process.env.PORT || 8000);
   await app.listen(port);
