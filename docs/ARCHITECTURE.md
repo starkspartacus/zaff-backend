@@ -134,6 +134,14 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
     remplacement d'une photo déjà choisie) + `data:invalidate products` vers la boutique ;
   - **recalcul complet** `sync()` toutes les 6 h et `POST /platform/devices/sync` (bouton « Mettre à jour ») : anciens produits
     rattachés, produits supprimés décomptés, demandes sans boutique retirées, photos manquantes transmises.
+- **Doublons** : `POST /platform/device-requests/:id/merge { deviceId }` → l'écriture de la demande devient un alias de
+  l'appareil (`aliases` « marque|modèle » normalisés, reconnus ensuite par le suivi) et ses produits y sont rattachés.
+- **Photo transmise** → notification `catalog.photo` (→ admin, storekeeper) à chaque boutique concernée.
+- **Prix pratiqué** `prices [{ currency, variant, variantKey, median, shops }]` recalculé par `sync()` : un prix par
+  boutique (sa médiane), puis médiane des boutiques, par devise ISO (`currencyCode`) et capacité (+ toutes capacités) ;
+  publié seulement à partir de **3 boutiques** (`MIN_SHOPS_FOR_PRICE`), jamais de prix individuel. La session renvoie
+  `establishment.currencyCode`.
+- **Contrat** : chaque ligne porte `specs` (fiche technique de l'appareil, 8 lignes max, `DevicesService.specsFor`).
 - Tri `GET /platform/devices?sort=popular` (les plus utilisés d'abord) ; `stats` : `usedDevices`, `usedWithPhotos`, `requests`.
 
 ## Images produits partagées (`/global/images`) — UploadThing, sans fichier orphelin
@@ -179,6 +187,7 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 - Émettre depuis les services via `NotificationsService.notify()` / `.invalidate()` (jamais de socket dans le métier).
 - Contrôleurs CRUD : décorateur `@Invalidates('products', …)` → `InvalidateInterceptor` diffuse après succès.
 - Types d'événements actuels : `sale.created` (→ admin, avec le mode de paiement), `units.added` (→ admin),
+  `catalog.photo` (→ admin, storekeeper : photo officielle ajoutée aux produits),
   `stock.low` (→ admin, storekeeper), `cash.closed` (→ admin), `cash.validated` (→ vendeur),
   `return.created` (→ admin, + storekeeper si atelier), `repair.ready` (→ admin, storekeeper).
 - Une notification vise des rôles (`roles`) et/ou des personnes (`userIds`, salon `u:<userId>`).

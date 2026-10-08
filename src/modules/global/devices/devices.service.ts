@@ -82,6 +82,8 @@ export class DevicesService implements OnModuleInit {
       variants: d.variants || [],
       colors: d.colors || [],
       specs: (d.specs || []).map((s: any) => ({ label: s.label, value: s.value })),
+      prices: (d.prices || []).map((x: any) => ({ currency: x.currency, variant: x.variant || null, variantKey: x.variantKey || '', median: x.median, shops: x.shops })),
+      aliases: (d.aliases || []).length,
       photos,
       imageId: d.defaultImageId || photos[0]?.imageId || null,
       active: d.active !== false,
@@ -91,7 +93,7 @@ export class DevicesService implements OnModuleInit {
   }
 
   private build(devices: any[]) {
-    const models: Record<string, Record<string, Array<{ id: string; name: string; variants?: string[]; colors?: string[]; specs?: { label: string; value: string }[]; photos: { imageId: string; color: string | null }[]; imageId: string | null }>>> = {};
+    const models: Record<string, Record<string, Array<{ id: string; name: string; variants?: string[]; colors?: string[]; specs?: { label: string; value: string }[]; prices?: { currency: string; variant: string | null; variantKey: string; median: number; shops: number }[]; photos: { imageId: string; color: string | null }[]; imageId: string | null }>>> = {};
     for (const d of devices) {
       const v = this.view(d);
       ((models[v.category] ??= {})[v.brand] ??= []).push({
@@ -100,6 +102,7 @@ export class DevicesService implements OnModuleInit {
         variants: v.variants.length ? v.variants : undefined,
         colors: v.colors.length ? v.colors : undefined,
         specs: v.specs.length ? v.specs : undefined,
+        prices: v.prices.length ? v.prices : undefined,
         photos: v.photos,
         imageId: v.imageId,
       });
@@ -309,6 +312,31 @@ export class DevicesService implements OnModuleInit {
     const { linked } = (await this.usage?.linkRequest(id, device.id)) ?? { linked: 0 };
     this.invalidate();
     return { device: await this.get(device.id), linked };
+  }
+
+  /**
+   * Doublon : la demande désigne un appareil déjà au catalogue écrit autrement. Son écriture devient un alias
+   * (les prochaines saisies identiques seront reconnues) et les produits concernés y sont rattachés.
+   */
+  async mergeRequest(id: string, deviceId: string) {
+    const r = await this.requestDoc(id);
+    const d = await this.doc(deviceId);
+    const alias = `${r.brandKey}|${r.modelKey}`;
+    if (alias !== `${d.brandKey}|${d.modelKey}`) await this.model.updateOne({ _id: d._id }, { $addToSet: { aliases: alias } });
+    await this.requests!.updateOne({ _id: r._id }, { $set: { status: 'added', deviceId: String(d._id) } });
+    const { linked } = (await this.usage?.linkRequest(id, String(d._id))) ?? { linked: 0 };
+    this.invalidate();
+    return { device: await this.get(String(d._id)), linked };
+  }
+
+  /** Fiche technique de plusieurs appareils (contrat de vente) */
+  async specsFor(ids: string[]) {
+    const valid = [...new Set(ids.filter((id) => id && Types.ObjectId.isValid(id)))];
+    const out = new Map<string, { label: string; value: string }[]>();
+    if (!valid.length) return out;
+    const docs: any[] = await this.model.find({ _id: { $in: valid } }).select('specs').lean().exec();
+    for (const d of docs) if ((d.specs || []).length) out.set(String(d._id), d.specs.map((s: any) => ({ label: s.label, value: s.value })));
+    return out;
   }
 
   async dismissRequest(id: string) {

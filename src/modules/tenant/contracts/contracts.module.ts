@@ -1,13 +1,14 @@
 import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { EstablishmentsModule } from '../../global/establishments/establishments.module';
+import { DevicesModule } from '../../global/devices/devices.module';
 import { ContractsController } from './contracts.controller';
 import { ContractsService } from './contracts.service';
 import { PublicWarrantyController } from './public-warranty.controller';
 import { WARRANTY_CODES, WarrantyCodes } from './warranty-code';
 
 @Module({
-  imports: [EstablishmentsModule],
+  imports: [EstablishmentsModule, DevicesModule],
   controllers: [ContractsController, PublicWarrantyController],
   providers: [
     ContractsService,

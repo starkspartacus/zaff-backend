@@ -19,10 +19,12 @@ describe('Catalogue global ↔ produits des boutiques', () => {
   const tenantModels: Record<string, FakeModel> = {};
   const products = (db: string) => (tenantModels[`${db}:Product`] ??= new FakeModel());
   const invalidated: string[] = [];
+  const notified: Array<{ db: string; type: string; message: string }> = [];
 
   beforeEach(async () => {
     for (const k of Object.keys(tenantModels)) delete tenantModels[k];
     invalidated.length = 0;
+    notified.length = 0;
     deviceModel = new FakeModel();
     requestModel = new FakeModel();
     imageModel = new FakeModel(['sha256']);
@@ -30,10 +32,11 @@ describe('Catalogue global ↔ produits des boutiques', () => {
     images = new ImagesService(imageModel as any);
     const tenants = { getModel: (db: string, name: string) => (tenantModels[`${db}:${name}`] ??= new FakeModel()) };
     const realtime = { invalidate: (db: string) => invalidated.push(db) };
-    usage = new DeviceUsageService(deviceModel as any, requestModel as any, establishments as any, tenants as any, images, realtime as any);
+    const notifications = { notify: async (db: string, n: { type: string; message: string }) => void notified.push({ db, type: n.type, message: n.message }) };
+    usage = new DeviceUsageService(deviceModel as any, requestModel as any, establishments as any, tenants as any, images, realtime as any, notifications as any);
     devices = new DevicesService(deviceModel as any, images, requestModel as any, usage);
     await devices.onModuleInit();
-    for (const db of ['shop_a', 'shop_b']) await establishments.create({ databaseName: db, status: 'active' });
+    for (const db of ['shop_a', 'shop_b', 'shop_c', 'shop_d']) await establishments.create({ databaseName: db, status: 'active', currencyCode: db === 'shop_d' ? 'NGN' : 'XOF' });
   });
 
   const addProduct = async (db: string, data: Record<string, unknown>) => {
@@ -60,6 +63,8 @@ describe('Catalogue global ↔ produits des boutiques', () => {
     expect(blue).toBe(p1.imageId);
     expect(imageModel.docs.find((d) => String(d._id) === blue).usage).toBe(2);
     expect(invalidated).toEqual(expect.arrayContaining(['shop_a', 'shop_b']));
+    // Chaque boutique est prévenue que ses produits ont leur photo officielle
+    expect(notified.filter((n) => n.type === 'catalog.photo').map((n) => n.db).sort()).toEqual(['shop_a', 'shop_b']);
 
     // Un produit qui a déjà une photo n'est jamais modifié
     await devices.addPhoto(dev.id, jpeg(2), undefined, 'Noir');
@@ -113,11 +118,53 @@ describe('Catalogue global ↔ produits des boutiques', () => {
     await products('shop_a').deleteMany({ brand: 'Autre' });
 
     const r = await devices.sync();
-    expect(r).toMatchObject({ shops: 2, devicesUsed: 1, requests: 1 });
+    expect(r).toMatchObject({ shops: 4, devicesUsed: 1, requests: 1 });
     expect(old.deviceId).toBe(dev.id);
     expect(old.imageId).toBe((await devices.get(dev.id)).imageId);
     expect((await devices.get(dev.id)).shops).toBe(1);
     expect((await devices.requestsList()).map((x) => x.model)).toEqual(['Z1']);
+  });
+
+  it('doublon : la demande est fusionnée avec l\'appareil existant, son écriture est ensuite reconnue', async () => {
+    const dev = await a55();
+    const p1 = await addProduct('shop_a', { brand: 'Samsung', name: 'A55 Galaxy' });
+    const [req] = await devices.requestsList();
+    const { linked } = await devices.mergeRequest(req.id, dev.id);
+    expect(linked).toBe(1);
+    expect(p1.deviceId).toBe(dev.id);
+    expect((await devices.get(dev.id)).aliases).toBe(1);
+    // Même écriture dans une autre boutique : reconnue directement, plus de demande
+    const p2 = await addProduct('shop_b', { brand: 'SAMSUNG', name: 'a55 galaxy' });
+    expect(p2.deviceId).toBe(dev.id);
+    expect(await devices.requestsList()).toHaveLength(0);
+  });
+
+  it('prix pratiqué : médiane par devise et capacité, publiée seulement à partir de 3 boutiques', async () => {
+    const dev = await a55();
+    const add = (db: string, salePrice: number, model = '256 Go') => products(db).create({ brand: 'Samsung', name: 'Galaxy A55 5G', model, salePrice, imageId: null, deviceId: null });
+    await add('shop_a', 250000);
+    await add('shop_a', 260000);
+    await add('shop_b', 240000);
+    await add('shop_d', 300000); // autre devise : jamais mélangée
+    await devices.sync();
+    expect((await devices.get(dev.id)).prices).toEqual([]); // 2 boutiques en F CFA : rien de publié
+    await add('shop_c', 270000);
+    await add('shop_c', 199000, '128 Go');
+    await devices.sync();
+    const prices = (await devices.get(dev.id)).prices;
+    expect(prices).toEqual(expect.arrayContaining([
+      { currency: 'XOF', variant: '256 Go', variantKey: '256go', median: 255000, shops: 3 },
+      { currency: 'XOF', variant: null, variantKey: '', median: 240000, shops: 3 },
+    ]));
+    expect(prices.some((x) => x.currency === 'NGN' || x.variant === '128 Go')).toBe(false);
+    expect((await devices.catalog()).models.smartphones.Samsung.find((m) => m.id === dev.id)!.prices).toHaveLength(2);
+  });
+
+  it('contrat : fiche technique des appareils vendus', async () => {
+    const d = await devices.create({ category: 'smartphones', brand: 'Itel', model: 'S99 Test', specs: [{ label: 'Écran', value: '6,6"' }] });
+    const map = await devices.specsFor([d.id, 'pas-un-id', '']);
+    expect(map.get(d.id)).toEqual([{ label: 'Écran', value: '6,6"' }]);
+    expect(map.size).toBe(1);
   });
 
   it('fiche technique : nettoyée et transmise aux boutiques avec le catalogue', async () => {

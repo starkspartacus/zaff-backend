@@ -162,6 +162,10 @@ export class PlatformDevicesController {
   }
 }
 
+class MergeDto {
+  @IsString() @Matches(/^[a-f0-9]{24}$/) deviceId: string;
+}
+
 class RequestQueryDto {
   @IsOptional() @IsIn(['open', 'added', 'dismissed']) status?: 'open' | 'added' | 'dismissed';
 }
@@ -184,6 +188,13 @@ export class PlatformDeviceRequestsController {
   @ApiOperation({ summary: 'Ajouter le modèle au catalogue ; les produits des boutiques concernées y sont rattachés' })
   accept(@Param('id') id: string, @Body() dto: DeviceDto) {
     return this.devices.acceptRequest(id, dto);
+  }
+
+  @Post(':id/merge')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Doublon : rattacher la demande à un appareil existant (écriture mémorisée comme alias)' })
+  merge(@Param('id') id: string, @Body() dto: MergeDto) {
+    return this.devices.mergeRequest(id, dto.deviceId);
   }
 
   @Post(':id/dismiss')

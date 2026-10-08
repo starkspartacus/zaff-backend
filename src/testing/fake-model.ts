@@ -26,6 +26,8 @@ const matches = (doc: any, query: any = {}): boolean =>
       });
     }
     if (cond === null) return value === null || value === undefined;
+    // Comme MongoDB : un champ tableau correspond si l'un de ses éléments est égal
+    if (Array.isArray(value) && !Array.isArray(cond)) return value.some((v) => v === cond || (v != null && eq(v, cond)));
     return value === cond || (value != null && cond != null && eq(value, cond));
   });
 

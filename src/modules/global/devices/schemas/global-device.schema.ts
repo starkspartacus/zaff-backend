@@ -24,6 +24,26 @@ export class DeviceSpec {
   value: string;
 }
 
+/** Prix de vente pratiqué (médiane sur plusieurs boutiques, par devise et capacité) — jamais le prix d'une boutique */
+@Schema({ _id: false })
+export class DevicePrice {
+  @Prop({ required: true })
+  currency: string;
+
+  /** Capacité / variante (« 256 Go ») ; null : toutes confondues */
+  @Prop({ default: null })
+  variant: string;
+
+  @Prop({ default: null })
+  variantKey: string;
+
+  @Prop({ required: true })
+  median: number;
+
+  @Prop({ required: true })
+  shops: number;
+}
+
 /**
  * Catalogue global des appareils (base globale), géré par l'administrateur de la plateforme :
  * chaque appareil a ses capacités, coloris et photos conformes ; toutes les boutiques s'en servent
@@ -71,6 +91,14 @@ export class GlobalDevice {
   /** Nombre de boutiques (tri « les plus utilisés d'abord ») */
   @Prop({ default: 0, index: true })
   shopCount: number;
+
+  /** Autres écritures du modèle saisies par des boutiques (« marque|modèle » normalisés), fusionnées par l'admin */
+  @Prop({ type: [String], default: [], index: true })
+  aliases: string[];
+
+  /** Prix pratiqués, recalculés par la synchronisation (au moins 3 boutiques) */
+  @Prop({ type: [DevicePrice], default: [] })
+  prices: DevicePrice[];
 
   /** Masqué des boutiques (ancien modèle, doublon…) sans être supprimé */
   @Prop({ default: true, index: true })

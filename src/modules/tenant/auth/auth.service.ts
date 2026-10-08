@@ -111,6 +111,7 @@ export class AuthService {
         name: establishment.name,
         slug: establishment.slug,
         currency: establishment.currency,
+        currencyCode: establishment.currencyCode || null,
         countryCode: establishment.countryCode || null,
         city: establishment.city || null,
       },

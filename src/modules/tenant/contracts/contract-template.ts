@@ -498,6 +498,8 @@ export interface ContractItem {
   reference: string | null;
   condition: 'new' | 'refurbished' | 'used';
   accessories: string | null;
+  /** Fiche technique officielle de l'appareil (catalogue ZAFF), 8 lignes au plus */
+  specs?: { label: string; value: string }[];
   quantity: number;
   price: number;
   warrantyMonths: number;

@@ -15,6 +15,7 @@ import { ContractSettingsDto } from './dto/contract-settings.dto';
 import { WARRANTY_CODES, WarrantyCodes } from './warranty-code';
 import { ProductUnit, ProductUnitSchema } from '../common/schemas/product-unit.schema';
 import { UnitStatus } from '../../../common/enums/unit-status.enum';
+import { DevicesService } from '../../global/devices/devices.service';
 
 /** N° de série partiellement masqué : de quoi le comparer à l'appareil, sans l'exposer en entier */
 export const maskSerial = (s: string | null) => (!s ? null : s.length <= 6 ? s : `${s.slice(0, 3)}${'•'.repeat(Math.min(6, s.length - 7))}${s.slice(-4)}`);
@@ -28,6 +29,7 @@ export class ContractsService {
     private readonly tenantConnectionService: TenantConnectionService,
     private readonly establishmentsService: EstablishmentsService,
     @Optional() @Inject(WARRANTY_CODES) private readonly codes?: WarrantyCodes,
+    @Optional() private readonly devices?: DevicesService,
   ) {}
 
   private m<T>(db: string, name: string, schema: any) { return this.tenantConnectionService.getModel<T>(db, name, schema); }
@@ -97,6 +99,8 @@ export class ContractsService {
     const products = await this.products(db).find({ _id: { $in: productIds.map((id) => new Types.ObjectId(id as string)) } }).exec();
     const byId = new Map(products.map((p: any) => [String(p._id), p]));
     const warranties: any[] = await this.warranties(db).find({ saleId: sale._id }).exec();
+    // Fiche technique officielle (catalogue ZAFF) imprimée sous chaque appareil ; jamais bloquant
+    const specs = this.devices ? await this.devices.specsFor(products.map((p: any) => p.deviceId)).catch(() => new Map()) : new Map();
 
     const items: ContractItem[] = sale.items.map((i: any, line: number) => {
       const p: any = byId.get(String(i.productId)) || {};
@@ -114,6 +118,7 @@ export class ContractsService {
         reference: p.sku || i.productSku || null,
         condition: p.condition || 'new',
         accessories: p.accessories || null,
+        specs: (specs.get(String(p.deviceId)) || []).slice(0, 8),
         quantity: i.quantity,
         price: i.unitPrice,
         warrantyMonths: months,

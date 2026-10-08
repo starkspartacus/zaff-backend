@@ -4,6 +4,7 @@ import { Model, Types } from 'mongoose';
 import { GLOBAL_CONNECTION } from '../../../database/database.constants';
 import { TenantConnectionService } from '../../../database/tenant-connection.service';
 import { RealtimeService } from '../../realtime/realtime.service';
+import { NotificationsService } from '../../tenant/notifications/notifications.service';
 import { Product, ProductSchema } from '../../tenant/common/schemas/product.schema';
 import { Establishment, EstablishmentDocument } from '../establishments/schemas/establishment.schema';
 import { ImagesService, imageKey, modelKeyOf } from '../images/images.service';
@@ -24,6 +25,14 @@ export interface TrackedProduct {
 }
 
 const SYNC_EVERY_MS = 6 * 60 * 60 * 1000;
+/** Un prix conseillé n'est publié qu'à partir de ce nombre de boutiques (aucun prix individuel déductible) */
+export const MIN_SHOPS_FOR_PRICE = 3;
+export const variantKeyOf = (v?: string | null) => (v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const median = (list: number[]) => {
+  const s = [...list].sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
+};
 
 /**
  * Lien entre les produits des boutiques et le catalogue global :
@@ -44,6 +53,7 @@ export class DeviceUsageService implements OnApplicationBootstrap, OnModuleDestr
     private readonly tenants: TenantConnectionService,
     private readonly images: ImagesService,
     @Optional() private readonly realtime?: RealtimeService,
+    @Optional() private readonly notifications?: NotificationsService,
   ) {}
 
   onApplicationBootstrap() {
@@ -67,7 +77,13 @@ export class DeviceUsageService implements OnApplicationBootstrap, OnModuleDestr
       if (d) return d;
     }
     if (!p.brand?.trim() || !p.name?.trim()) return null;
-    return this.devices.findOne({ brandKey: imageKey(p.brand), modelKey: modelKeyOf(p.brand, p.name) }).lean().exec();
+    const brandKey = imageKey(p.brand);
+    const modelKey = modelKeyOf(p.brand, p.name);
+    return (
+      (await this.devices.findOne({ brandKey, modelKey }).lean().exec()) ??
+      // Écriture différente fusionnée par l'admin (« Galaxy A55 » saisi « A55 5G Samsung »…)
+      (await this.devices.findOne({ aliases: `${brandKey}|${modelKey}` }).lean().exec())
+    );
   }
 
   /** Photo de l'appareil pour ce coloris (sinon la photo par défaut) */
@@ -157,7 +173,18 @@ export class DeviceUsageService implements OnApplicationBootstrap, OnModuleDestr
       let n = 0;
       const list: any[] = await this.products(db).find({ deviceId: String(device._id), imageId: null }).lean().exec();
       for (const p of list) if (await this.givePhoto(db, p._id, DeviceUsageService.pickPhoto(device, p.color)!)) n++;
-      if (n) this.realtime?.invalidate(db, ['products']);
+      if (n) {
+        this.realtime?.invalidate(db, ['products']);
+        // La boutique est prévenue : ses produits ont maintenant leur photo officielle
+        void this.notifications?.notify(db, {
+          type: 'catalog.photo',
+          title: 'Photo officielle disponible',
+          message: `${device.brand} ${device.model} : photo ajoutée par ZAFF à ${n} produit${n > 1 ? 's' : ''} de votre catalogue.`,
+          level: 'success',
+          roles: ['admin', 'storekeeper'],
+          data: { deviceId: String(device._id), count: n },
+        });
+      }
       given += n;
     }
     if (given) this.logger.log(`${device.brand} ${device.model} : photo transmise à ${given} produit(s)`);
@@ -189,7 +216,9 @@ export class DeviceUsageService implements OnApplicationBootstrap, OnModuleDestr
    * rattachement des anciens produits et photos manquantes. Lancé toutes les 6 h et à la demande de l'admin.
    */
   async sync() {
-    const shops: any[] = await this.establishments.find({ status: { $ne: 'suspended' } }).select('databaseName').lean().exec();
+    const shops: any[] = await this.establishments.find({ status: { $ne: 'suspended' } }).select('databaseName currencyCode').lean().exec();
+    // Prix de vente par appareil · devise · capacité : un prix par boutique (sa médiane), puis la médiane des boutiques
+    const prices = new Map<string, { device: string; currency: string; variant: string | null; byShop: Map<string, number[]> }>();
     const usage = new Map<string, Set<string>>();
     const asked = new Map<string, { db: Set<string>; p: TrackedProduct }>();
     let products = 0;
@@ -199,9 +228,9 @@ export class DeviceUsageService implements OnApplicationBootstrap, OnModuleDestr
       if (!known.has(key)) known.set(key, await this.findDevice(p));
       return known.get(key);
     };
-    for (const { databaseName: db } of shops) {
+    for (const { databaseName: db, currencyCode } of shops) {
       if (!db) continue;
-      const list: any[] = await this.products(db).find({}).select('category brand name model color deviceId imageId').lean().exec();
+      const list: any[] = await this.products(db).find({}).select('category brand name model color deviceId imageId salePrice').lean().exec();
       for (const p of list) {
         if (!p.brand?.trim() || !(p.name?.trim() || p.deviceId)) continue;
         products++;
@@ -212,6 +241,14 @@ export class DeviceUsageService implements OnApplicationBootstrap, OnModuleDestr
           if (String(p.deviceId || '') !== id) await this.products(db).updateOne({ _id: p._id }, { $set: { deviceId: id } });
           const photo = !p.imageId && DeviceUsageService.pickPhoto(device, p.color);
           if (photo) await this.givePhoto(db, p._id, photo);
+          if (currencyCode && p.salePrice > 0) {
+            for (const variant of [p.model?.trim() || null, null]) {
+              const key = `${id}|${currencyCode}|${variantKeyOf(variant)}`;
+              const entry = prices.get(key) ?? prices.set(key, { device: id, currency: currencyCode, variant, byShop: new Map() }).get(key)!;
+              (entry.byShop.get(db) ?? entry.byShop.set(db, []).get(db)!).push(p.salePrice);
+              if (!variant) break;
+            }
+          }
         } else {
           const key = `${imageKey(p.brand)}|${modelKeyOf(p.brand, p.name)}`;
           const entry = asked.get(key) ?? asked.set(key, { db: new Set(), p }).get(key)!;
@@ -221,11 +258,19 @@ export class DeviceUsageService implements OnApplicationBootstrap, OnModuleDestr
     }
     await this.devices.updateMany({ shopCount: { $gt: 0 } }, { $set: { shops: [], shopCount: 0 } });
     for (const [id, dbs] of usage) await this.devices.updateOne({ _id: id }, { $set: { shops: [...dbs], shopCount: dbs.size } });
+    const published = new Map<string, any[]>();
+    for (const e of prices.values()) {
+      if (e.byShop.size < MIN_SHOPS_FOR_PRICE) continue;
+      const list = published.get(e.device) ?? published.set(e.device, []).get(e.device)!;
+      list.push({ currency: e.currency, variant: e.variant, variantKey: variantKeyOf(e.variant), median: median([...e.byShop.values()].map(median)), shops: e.byShop.size });
+    }
+    await this.devices.updateMany({ 'prices.0': { $exists: true } }, { $set: { prices: [] } });
+    for (const [id, list] of published) await this.devices.updateOne({ _id: id }, { $set: { prices: list } });
     // Demandes ouvertes : recalculées ; celles qui ne concernent plus aucune boutique disparaissent
     await this.requests.updateMany({ status: 'open' }, { $set: { shops: [], shopCount: 0 } });
     for (const { db, p } of asked.values()) for (const d of db) await this.request(d, p);
     await this.requests.deleteMany({ status: 'open', shopCount: 0 });
-    return { shops: shops.length, products, devicesUsed: usage.size, requests: await this.requests.countDocuments({ status: 'open' }) };
+    return { shops: shops.length, products, devicesUsed: usage.size, priced: published.size, requests: await this.requests.countDocuments({ status: 'open' }) };
   }
 }
 

@@ -151,6 +151,7 @@ export class RegistrationService {
       name: establishment.name,
       slug,
       currency: establishment.currency,
+      currencyCode: establishment.currencyCode || null,
       countryCode: country.code,
       city,
       commune,

@@ -15,6 +15,7 @@ const PUSH_URL: Record<string, string> = {
   'cash.validated': '/app/cash-closing',
   'return.created': '/app/returns',
   'repair.ready': '/app/repairs',
+  'catalog.photo': '/app/catalog',
 };
 
 export interface NotifyInput {
