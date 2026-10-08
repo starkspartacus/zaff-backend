@@ -164,10 +164,15 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 - **Refus de Google** lus en détail (`parseGoogleQuota`) : délai annoncé (« retry in 22.8s » / RetryInfo), quota du jour,
   `limit: 0` (aucun quota gratuit pour ce modèle ou pour la recherche Google → 24 h) ; vrai message journalisé une fois par
   heure et par modèle. Réponse lente / réseau coupé → ce fournisseur se repose 1 min, on passe au suivant (120 s max).
+- **Recherche Google ≠ génération** : quotas séparés (`modèle#search`) ; recherche refusée par tous les modèles → aucune
+  attente, `searchBlockedUntil` (15 min min.) et passage direct aux **sources libres** : photo de référence **Wikidata**
+  (propriété P18 de la fiche du modèle, libellé vérifié) puis recherche **Wikimedia Commons** ; la vérification (sans
+  recherche) continue avec son propre quota. `maxOutputTokens: 8192` (réponses JSON jamais coupées).
 - **Complétion des fiches** (lot `kind: 'specs'`, `selection: 'incomplete'`) : 6 appareils par requête, sans recherche
   Google (peu de quota) ; coloris officiels + **codes couleur** (`colorCodes [{ name, hex }]`), capacités vendues, fiche
   technique ; `DevicesService.applyAiFacts` ne remplit **que ce qui est vide** (jamais la saisie de l'admin), codes hex
-  vérifiés, modèle inconnu de l'IA (`known: false`) → rien d'inventé ; `aiFilledAt` pour relecture.
+  vérifiés, modèle inconnu de l'IA (`known: false`) → rien d'inventé ; `aiFilledAt` pour relecture. Lots de 4 ; réponses
+  rattachées par `id`, sinon numéro `n`, sinon nom ; appareil sans réponse → nouvel essai seul.
 - **Journal par appareil** (`log` du lot : trouvé / sans résultat / erreur + raison : photos repérées, refus HTTP, autre
   modèle…). Aucune photo utilisable via la recherche IA → nouvel essai sur Wikimedia. Téléchargements : en-tête Referer,
   navigateur classique pour les fabricants, robot identifié pour Wikimedia (sinon 429), vignettes Commons en taille standard

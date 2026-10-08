@@ -62,6 +62,20 @@ describe('Photos des appareils trouvées par l\'IA', () => {
       return { buffer: Buffer.from(html), contentType: 'text/html; charset=utf-8', url };
     }
     if (url === 'https://shop.example.com/galaxy-a55') return { buffer: Buffer.from('<img data-src="https://shop.example.com/a55.svg">'), contentType: 'text/html', url };
+    if (url.startsWith('https://www.wikidata.org/w/api.php') && url.includes('wbsearchentities')) {
+      return { buffer: Buffer.from(JSON.stringify({ search: [{ id: 'Q1', label: 'Samsung Galaxy A55' }, { id: 'Q2', label: 'Samsung Galaxy A54' }] })), contentType: 'application/json', url };
+    }
+    if (url.startsWith('https://www.wikidata.org/w/api.php') && url.includes('wbgetentities')) {
+      expect(url).toContain('ids=Q1&'); // l'A54 n'est pas demandé
+      return { buffer: Buffer.from(JSON.stringify({ entities: { Q1: { claims: { P18: [{ mainsnak: { datavalue: { value: 'Galaxy A55 officiel.png' } } }] } } } })), contentType: 'application/json', url };
+    }
+    if (url.startsWith('https://commons.wikimedia.org/w/api.php') && url.includes('titles=')) {
+      return {
+        buffer: Buffer.from(JSON.stringify({ query: { pages: { 9: { title: 'File:Galaxy A55 officiel.png', imageinfo: [{ thumburl: 'https://cdn.samsung.com/a55-bleu.png', descriptionurl: 'https://commons.wikimedia.org/wiki/File:Galaxy_A55_officiel.png', width: 2000, height: 1500, extmetadata: { LicenseShortName: { value: 'CC0' } } }] } } } })),
+        contentType: 'application/json',
+        url,
+      };
+    }
     if (url.startsWith('https://commons.wikimedia.org/w/api.php')) {
       const page = (title: string, file: string, w = 1600) => ({ title, imageinfo: [{ thumburl: file, descriptionurl: 'https://commons.wikimedia.org/wiki/' + title, width: w, height: 900, extmetadata: { LicenseShortName: { value: 'CC BY-SA 4.0' }, Artist: { value: '<a href="#">Jean Photo</a>' } } }] });
       return {
@@ -209,7 +223,7 @@ describe('Photos des appareils trouvées par l\'IA', () => {
     await service.createJob({ deviceIds: [dev.id] });
     await service.kick();
     const [c] = await service.listCandidates({});
-    expect(c).toMatchObject({ score: 88, source: 'commons.wikimedia.org', verdict: { credit: 'Photo : Jean Photo, CC BY-SA 4.0, Wikimedia Commons' } });
+    expect(c).toMatchObject({ score: 88, source: 'commons.wikimedia.org', verdict: { credit: expect.stringMatching(/Wikimedia Commons$/) } });
     expect(fetched.some((u) => u.includes('a54'))).toBe(false); // autre modèle écarté par le titre
   });
 
@@ -272,12 +286,52 @@ describe('Photos des appareils trouvées par l\'IA', () => {
 
   it('journal par appareil : on sait pourquoi aucune photo n\'a été trouvée', async () => {
     const dev = await a55();
+    const saved = files;
     files = {}; // sites des fabricants et Wikimedia : toutes les photos refusées (404)
     ai.verdicts = [];
     await service.createJob({ deviceIds: [dev.id] });
     await service.kick();
     const [j] = await service.listJobs();
     expect(j).toMatchObject({ notFound: 1 });
+    files = saved;
     expect(j.log[0]).toMatchObject({ name: 'Samsung Galaxy A55 5G', result: 'none', detail: expect.stringMatching(/Recherche IA : \d+ photo\(s\) repérée\(s\).*HTTP 404.*Wikimedia/) });
+  });
+
+  it('recherche Google indisponible : photo de référence Wikidata d\'abord, puis Commons', async () => {
+    const dev = await a55();
+    ai.searchQuota = new Date(Date.now() + 3600_000);
+    ai.verdicts = [
+      { index: 0, sameModel: true, productPhoto: true, view: 'front', color: 'Bleu glacé', cleanBackground: true, textOrWatermark: false, score: 90, reason: 'Wikidata' },
+      { index: 1, sameModel: true, productPhoto: true, view: 'front', color: 'Noir', cleanBackground: true, textOrWatermark: false, score: 80, reason: 'Commons' },
+    ];
+    await service.createJob({ deviceIds: [dev.id] });
+    await service.kick();
+    const review = ai.calls.find((r) => r.schema && !r.search)!;
+    expect(review.parts.filter((p) => 'image' in p)).toHaveLength(2);
+    const list = await service.listCandidates({});
+    // Photo de référence Wikidata (CC0) et photo trouvée sur Commons, chacune avec son crédit
+    expect(list.map((c) => c.verdict.credit).sort()).toEqual(['CC0, Wikimedia Commons', 'Photo : Jean Photo, CC BY-SA 4.0, Wikimedia Commons']);
+    const [j] = await service.listJobs();
+    expect(j.log[0].detail).toMatch(/Wikidata \/ Wikimedia : 3 photo.*2 utilisable/);
+  });
+
+  it('fiches : réponses rattachées par numéro quand l\'IA recopie mal les identifiants, sinon nouvel essai un par un', async () => {
+    const a = (await devices.list({ search: 'galaxy a55' })).items[0];
+    const b = await devices.create({ category: 'smartphones', brand: 'Itel', model: 'S99 Fiche' });
+    let calls = 0;
+    ai.generate = async (req: AiRequest) => {
+      calls++;
+      const text = req.parts.map((p) => ('text' in p ? p.text : '')).join(' ');
+      if (text.includes(b.id) && !text.includes(a.id)) {
+        return { text: JSON.stringify({ devices: [{ n: 1, id: 'mal-recopie', known: true, colors: [{ name: 'Bleu', hex: '#0000ff' }] }] }), sources: [] };
+      }
+      // Lot : seul le n° 1 est rendu (identifiant faux), le n° 2 est oublié
+      return { text: JSON.stringify({ devices: [{ n: 1, id: 'xxx', known: true, colors: [{ name: 'Noir', hex: '#000000' }], specs: [{ label: 'Écran', value: '6,6"' }] }] }), sources: [] };
+    };
+    await service.createJob({ kind: 'specs', deviceIds: [a.id, b.id] });
+    await service.kick();
+    expect(calls).toBe(2);
+    expect((await devices.get(a.id)).specs).toEqual([{ label: 'Écran', value: '6,6"' }]);
+    expect((await devices.get(b.id)).colors).toEqual(['Bleu']);
   });
 });

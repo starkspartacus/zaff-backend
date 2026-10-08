@@ -55,8 +55,8 @@ describe('Client Gemini', () => {
     global.fetch = (async (url: string) => (urls.push(url), url.includes('gemini-a:') ? quota(40) : ok('depuis b'))) as any;
     const c = new GeminiClient(config('gemini-a', { 'ai.geminiFallbackModels': ['gemini-b'] }));
     expect((await c.generate({ parts: [{ text: 'x' }], search: true })).text).toBe('depuis b');
-    await c.generate({ parts: [{ text: 'y' }] });
-    expect(urls.filter((u) => u.includes('gemini-a:'))).toHaveLength(1); // en pause pendant 40 s, plus sollicité
+    await c.generate({ parts: [{ text: 'y' }], search: true });
+    expect(urls.filter((u) => u.includes('gemini-a:'))).toHaveLength(1); // en pause pendant 40 s pour la recherche, plus sollicité
     expect(c.describe()[0].coolingUntil).toBeInstanceOf(Date);
   });
 
@@ -105,5 +105,26 @@ describe('Client Gemini', () => {
     expect(parseGoogleQuota(msg('Quota exceeded for metric: free_tier_requests, limit: 10, model: gemini-3.8-flash. Please retry in 22.8s.'))).toMatchObject({ retryMs: 23300, daily: false });
     expect(parseGoogleQuota(msg('Quota exceeded for metric: grounding_requests, limit: 0, model: gemini-3.8-flash'))).toMatchObject({ retryMs: 24 * 3600 * 1000, daily: true });
     expect(parseGoogleQuota(msg('Quota exceeded: requests per day')).daily).toBe(true);
+  });
+
+  it('recherche Google refusée partout : bascule immédiate (sans attendre) et la génération simple continue', async () => {
+    const urls: string[] = [];
+    global.fetch = (async (url: string, init: RequestInit) => {
+      urls.push(url);
+      const body = JSON.parse(String(init?.body || '{}'));
+      if (body.tools) return reply(429, { error: { message: 'You exceeded your current quota, please check your plan and billing details.' } });
+      return ok('vision ok');
+    }) as any;
+    const c = new GeminiClient(config('gemini-a', { 'ai.geminiFallbackModels': ['gemini-b'] }));
+    const t = Date.now();
+    const err: AiQuotaExceeded = await c.generate({ parts: [{ text: 'cherche' }], search: true }).catch((e) => e);
+    expect(err).toBeInstanceOf(AiQuotaExceeded);
+    expect(Date.now() - t).toBeLessThan(3000); // aucune attente de 30 s
+    expect(err.resumeAt.getTime()).toBeGreaterThan(t + 14 * 60_000);
+    const before = urls.length;
+    await expect(c.generate({ parts: [{ text: 'encore' }], search: true })).rejects.toBeInstanceOf(AiQuotaExceeded);
+    expect(urls.length).toBe(before); // la recherche n'est plus redemandée pendant 15 min
+    expect((await c.generate({ parts: [{ text: 'vérifie' }] })).text).toBe('vision ok'); // quota séparé
+    expect(c.describe()[0].searchBlockedUntil).toBeInstanceOf(Date);
   });
 });

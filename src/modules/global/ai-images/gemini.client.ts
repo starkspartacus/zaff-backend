@@ -64,7 +64,8 @@ class ModelGone extends Error {
 const GEMINI = 'https://generativelanguage.googleapis.com/v1beta';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const DAILY_COOLDOWN_MS = 60 * 60 * 1000; // quota du jour : nouvel essai toutes les heures
-const MAX_WAIT_MS = 65_000; // au-delà, le lot est mis en pause plutôt que d'attendre
+const MAX_WAIT_MS = 65_000;
+const SEARCH_BLOCK_MS = 15 * 60 * 1000; // au-delà, le lot est mis en pause plutôt que d'attendre
 
 /** Espace les appels pour rester sous la limite par minute (palier gratuit) */
 class Spacer {
@@ -126,6 +127,8 @@ class GeminiModel implements Provider {
       ],
       generationConfig: {
         temperature: req.temperature ?? 0.2,
+        // Assez de place pour une réponse JSON complète (sinon elle est coupée et illisible)
+        maxOutputTokens: 8192,
         ...(req.schema ? { responseMimeType: 'application/json', responseSchema: req.schema } : {}),
       },
       ...(req.search ? { tools: [{ google_search: {} }] } : {}),
@@ -232,6 +235,8 @@ export class GeminiClient implements AiClient {
   private providers: Provider[] = [];
   private readonly cooldown = new Map<string, number>();
   private readonly reported = new Map<string, number>();
+  /** Recherche Google refusée par tous les modèles (quota gratuit) : on ne la redemande pas avant cette heure */
+  private searchBlockedUntil = 0;
   private discovered = false;
 
   constructor(config: ConfigService) {
@@ -254,7 +259,16 @@ export class GeminiClient implements AiClient {
   /** Fournisseurs dans l'ordre d'essai (affiché à l'admin) */
   describe() {
     const now = Date.now();
-    return this.providers.map((p) => ({ label: p.label, search: p.search, coolingUntil: (this.cooldown.get(p.name) ?? 0) > now ? new Date(this.cooldown.get(p.name)!) : null }));
+    const searchBlocked = this.searchBlockedUntil > now ? new Date(this.searchBlockedUntil) : null;
+    return this.providers.map((p) => ({
+      label: p.label,
+      search: p.search,
+      coolingUntil: (() => {
+        const until = Math.max(this.cooldown.get(p.name) ?? 0, this.cooldown.get(`${p.name}#search`) ?? 0);
+        return until > now ? new Date(until) : null;
+      })(),
+      searchBlockedUntil: p.search ? searchBlocked : null,
+    }));
   }
 
   /** Autres modèles « flash » stables de la clé (découverts une fois) : autant de quotas gratuits en plus */
@@ -285,16 +299,22 @@ export class GeminiClient implements AiClient {
   async generate(req: AiRequest): Promise<AiResponse> {
     if (!this.enabled) throw new AiUnavailable("Aucune IA n'est configurée : ajoutez GEMINI_API_KEY dans l'environnement du serveur.");
     await this.discover();
+    // La recherche Google a son propre quota (souvent très faible en gratuit) : elle ne bloque jamais le reste
+    if (req.search && this.searchBlockedUntil > Date.now()) {
+      throw new AiQuotaExceeded('Recherche Google indisponible (quota gratuit) : sources libres utilisées.', new Date(this.searchBlockedUntil));
+    }
+    // Quotas séparés : génération simple / génération avec recherche Google
+    const key = (p: Provider) => (req.search ? `${p.name}#search` : p.name);
     for (let round = 0; round < 3; round++) {
       const usable = this.providers.filter((p) => !req.search || p.search);
       if (!usable.length) throw new AiQuotaExceeded('Aucune IA capable de chercher sur Google.', new Date(Date.now() + DAILY_COOLDOWN_MS));
       for (const p of usable) {
-        if ((this.cooldown.get(p.name) ?? 0) > Date.now()) continue;
+        if ((this.cooldown.get(key(p)) ?? 0) > Date.now()) continue;
         try {
           return await p.call(req);
         } catch (e) {
           if (e instanceof RateLimited) {
-            this.cooldown.set(p.name, Date.now() + e.retryMs);
+            this.cooldown.set(key(p), Date.now() + e.retryMs);
             // Le vrai message de Google, une fois par fournisseur et par heure (pour comprendre quel quota bloque)
             const said = this.reported.get(p.name) ?? 0;
             if (Date.now() - said > 3600_000 && e.detail) {
@@ -306,7 +326,7 @@ export class GeminiClient implements AiClient {
           }
           // Réponse trop lente / réseau coupé : ce fournisseur se repose une minute, on essaie le suivant
           if (e instanceof Error && (e.name === 'TimeoutError' || e.name === 'AbortError' || e instanceof TypeError)) {
-            this.cooldown.set(p.name, Date.now() + 60_000);
+            this.cooldown.set(key(p), Date.now() + 60_000);
             this.logger.warn(`${p.label} : pas de réponse (${e.message}), on passe au suivant`);
             continue;
           }
@@ -327,14 +347,20 @@ export class GeminiClient implements AiClient {
       }
       // Tous en pause : attendre si c'est court, sinon mettre le travail en pause
       const candidates = this.providers.filter((p) => !req.search || p.search);
-      const soonest = Math.min(...candidates.map((p) => this.cooldown.get(p.name) ?? 0));
+      const soonest = Math.min(...candidates.map((p) => this.cooldown.get(key(p)) ?? 0));
       if (!candidates.length) break;
+      // Recherche refusée partout : pas d'attente, on bascule tout de suite sur les sources libres pour 15 min au moins
+      if (req.search && soonest > Date.now()) {
+        this.searchBlockedUntil = Math.max(soonest, Date.now() + SEARCH_BLOCK_MS);
+        this.logger.warn(`Recherche Google refusée par tous les modèles (quota gratuit) : sources libres (Wikidata, Wikimedia) jusqu'à ${new Date(this.searchBlockedUntil).toLocaleTimeString('fr-FR')}`);
+        throw new AiQuotaExceeded('Recherche Google indisponible (quota gratuit).', new Date(this.searchBlockedUntil));
+      }
       const wait = soonest - Date.now();
       if (wait <= 0) continue;
       if (wait > MAX_WAIT_MS) throw new AiQuotaExceeded('Quota gratuit atteint pour toutes les IA disponibles.', new Date(soonest));
       await sleep(wait);
     }
-    const soonest = Math.min(...this.providers.map((p) => this.cooldown.get(p.name) ?? Date.now() + DAILY_COOLDOWN_MS));
+    const soonest = Math.min(...this.providers.map((p) => this.cooldown.get(key(p)) ?? Date.now() + DAILY_COOLDOWN_MS));
     throw new AiQuotaExceeded('Quota gratuit atteint pour toutes les IA disponibles.', new Date(Math.max(soonest, Date.now() + 60_000)));
   }
 }

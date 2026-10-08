@@ -8,7 +8,19 @@ import { imageKey } from '../images/images.service';
 import { AI_CLIENT, AiClient, AiPart, AiQuotaExceeded, AiUnavailable, parseJsonLoose } from './gemini.client';
 import { AiImageCandidate, AiImageCandidateDocument, AiImageJob, AiImageJobDocument } from './ai-images.schemas';
 import { ImageRejected, NormalizedImage, normalizeProductImage } from './image-normalize';
-import { commonsSearchUrl, domainOf, extractImageUrls, modelTokens, parseCommons } from './image-sources';
+import {
+  commonsFilesUrl,
+  commonsSearchUrl,
+  domainOf,
+  extractImageUrls,
+  modelTokens,
+  parseCommons,
+  parseCommonsFiles,
+  parseWikidataImages,
+  parseWikidataSearch,
+  wikidataEntitiesUrl,
+  wikidataSearchUrl,
+} from './image-sources';
 import { safeFetch, SafeFetchOptions, FetchResult } from './safe-fetch';
 
 export type Fetcher = (url: string, opts: SafeFetchOptions) => Promise<FetchResult>;
@@ -78,7 +90,10 @@ const VERDICT_SCHEMA = {
   required: ['images'],
 };
 
-const SPECS_BATCH = 6;
+const SPECS_BATCH = 4;
+
+/** « Apple » + « Apple Watch Ultra 3 » → « Apple Watch Ultra 3 » (pas de marque en double) */
+const displayName = (d: { brand: string; model: string }) => (d.model.toLowerCase().startsWith(d.brand.toLowerCase()) ? d.model : `${d.brand} ${d.model}`);
 
 interface SpecsFacts {
   id: string;
@@ -96,7 +111,9 @@ const SPECS_SCHEMA = {
       items: {
         type: 'OBJECT',
         properties: {
+          n: { type: 'INTEGER' },
           id: { type: 'STRING' },
+          name: { type: 'STRING' },
           known: { type: 'BOOLEAN' },
           colors: { type: 'ARRAY', items: { type: 'OBJECT', properties: { name: { type: 'STRING' }, hex: { type: 'STRING' } }, required: ['name'] } },
           variants: { type: 'ARRAY', items: { type: 'STRING' } },
@@ -293,7 +310,7 @@ export class AiImagesService implements OnApplicationBootstrap {
         this.jobs.updateOne({ _id: job._id }, { $push: { log: { deviceId, name, result, detail: detail.slice(0, 400), at: new Date() } } });
       try {
         const device = await this.devices.get(deviceId);
-        name = `${device.brand} ${device.model}`;
+        name = displayName(device);
         const r = await this.findForDevice(device, job);
         inc.found = r.kept;
         inc.published = r.published;
@@ -343,6 +360,14 @@ export class AiImagesService implements OnApplicationBootstrap {
       let facts: SpecsFacts[];
       try {
         facts = await this.askSpecs(batch);
+        // Appareils oubliés ou réponse coupée : nouvel essai, un par un
+        for (const d of batch.filter((x) => !facts.some((f) => f.id === x.id))) {
+          const [one] = await this.askSpecs([d]).catch((e) => {
+            if (e instanceof AiQuotaExceeded || e instanceof AiUnavailable) throw e;
+            return [] as SpecsFacts[];
+          });
+          if (one) facts.push({ ...one, id: d.id });
+        }
       } catch (e: any) {
         if (e instanceof AiQuotaExceeded) {
           status = 'paused';
@@ -360,13 +385,13 @@ export class AiImagesService implements OnApplicationBootstrap {
         const f = facts.find((x) => x.id === d.id);
         let changed: string[] = [];
         if (f?.known) changed = await this.devices.applyAiFacts(d.id, f).catch(() => []);
-        const detail = !f ? "Pas de réponse de l'IA" : !f.known ? "Modèle inconnu de l'IA : rien n'a été inventé" : changed.length ? `Complété : ${changed.join(', ')}` : 'Déjà complet';
+        const detail = !f ? "Pas de réponse lisible de l'IA (réessayez plus tard)" : !f.known ? "Modèle inconnu de l'IA : rien n'a été inventé" : changed.length ? `Complété : ${changed.join(', ')}` : 'Déjà complet';
         await this.jobs.updateOne(
           { _id: job._id },
           {
             $inc: { processed: 1, found: changed.length ? 1 : 0, notFound: changed.length ? 0 : 1 },
             $addToSet: { doneIds: d.id },
-            $push: { log: { deviceId: d.id, name: `${d.brand} ${d.model}`, result: changed.length ? 'found' : 'none', detail, at: new Date() } },
+            $push: { log: { deviceId: d.id, name: displayName(d), result: changed.length ? 'found' : 'none', detail, at: new Date() } },
           },
         );
       }
@@ -382,7 +407,7 @@ export class AiImagesService implements OnApplicationBootstrap {
   }
 
   private async askSpecs(batch: Device[]): Promise<SpecsFacts[]> {
-    const list = batch.map((d) => `- id ${d.id} : ${d.brand} ${d.model} (${d.category})`).join('\n');
+    const list = batch.map((d, i) => `${i + 1}. id ${d.id} : ${displayName(d)} (${d.category})`).join('\n');
     const res = await this.ai.generate({
       temperature: 0,
       schema: SPECS_SCHEMA,
@@ -395,12 +420,25 @@ export class AiImagesService implements OnApplicationBootstrap {
             '(format "128 Go", "8 Go + 256 Go", "16 Go / 512 Go SSD"), and up to 8 key specs with French labels',
             '(Écran, Processeur, Mémoire vive, Stockage, Appareil photo, Batterie, Système, Réseau…) and short French values.',
             'If you do not know this exact model for sure, set known=false and leave every list empty: NEVER invent.',
+            'Return exactly one entry per device, in the same order, with its number "n" and its exact "id".',
             `Devices:\n${list}`,
           ].join('\n'),
         },
       ],
     });
-    return parseJsonLoose<{ devices?: SpecsFacts[] }>(res.text)?.devices || [];
+    const answers = parseJsonLoose<{ devices?: Array<SpecsFacts & { n?: number; name?: string }> }>(res.text)?.devices || [];
+    // Rattachement par identifiant, sinon par numéro, sinon par nom (l'IA recopie parfois mal les identifiants)
+    const out: SpecsFacts[] = [];
+    batch.forEach((d, i) => {
+      const norm = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, '');
+      const a =
+        answers.find((x) => x?.id === d.id) ||
+        answers.find((x) => Number(x?.n) === i + 1) ||
+        answers.find((x) => x?.name && norm(x.name).includes(norm(d.model))) ||
+        (batch.length === 1 && answers.length === 1 ? answers[0] : undefined);
+      if (a) out.push({ ...a, id: d.id });
+    });
+    return out;
   }
 
   // ─── Recherche pour un appareil ───
@@ -431,13 +469,33 @@ export class AiImagesService implements OnApplicationBootstrap {
     return { images, pages, via: 'ia' as const };
   }
 
+  private async getJson(url: string) {
+    const res = await this.fetcher(url, { maxBytes: 2_000_000, timeoutMs: 10000, accept: 'application/json' });
+    return JSON.parse(res.buffer.toString('utf8'));
+  }
+
+  /**
+   * Sources libres et gratuites (sans IA ni clé) : 1) photo de référence de la fiche Wikidata du modèle (choisie par
+   * la communauté, très fiable) ; 2) recherche Wikimedia Commons sur le titre. Auteur et licence gardés.
+   */
   private async commons(device: Device) {
+    const tokens = modelTokens(device.brand, device.model);
+    const out: Array<{ url: string; page?: string; credit: string | null }> = [];
     try {
-      const res = await this.fetcher(commonsSearchUrl(device.brand, device.model), { maxBytes: 2_000_000, timeoutMs: 10000, accept: 'application/json' });
-      return parseCommons(JSON.parse(res.buffer.toString('utf8')), modelTokens(device.brand, device.model)).map((x) => ({ url: x.url, page: x.page || undefined, credit: x.credit }));
+      const ids = parseWikidataSearch(await this.getJson(wikidataSearchUrl(device.brand, device.model)), tokens);
+      const files = ids.length ? parseWikidataImages(await this.getJson(wikidataEntitiesUrl(ids))) : [];
+      if (files.length) out.push(...parseCommonsFiles(await this.getJson(commonsFilesUrl(files))).map((x) => ({ url: x.url, page: x.page || undefined, credit: x.credit })));
     } catch {
-      return [];
+      /* Wikidata indisponible : on passe à la recherche Commons */
     }
+    try {
+      for (const x of parseCommons(await this.getJson(commonsSearchUrl(device.brand, device.model)), tokens)) {
+        if (!out.some((o) => o.url === x.url)) out.push({ url: x.url, page: x.page || undefined, credit: x.credit });
+      }
+    } catch {
+      /* Commons indisponible */
+    }
+    return out.slice(0, 10);
   }
 
   private readonly credits = new Map<string, string>();
@@ -524,7 +582,7 @@ export class AiImagesService implements OnApplicationBootstrap {
     const notes: string[] = [];
     const describe = (f: typeof found, d: typeof dl) => {
       const refusals = [...d.refused.entries()].map(([r, n]) => `${r} ×${n}`).join(', ');
-      return `${f.via === 'commons' ? 'Wikimedia' : 'Recherche IA'} : ${f.list.length} photo(s) repérée(s)${f.pages ? ` dans ${f.pages} page(s)` : ''}, ${d.imgs.length} utilisable(s)${refusals ? ` (refus : ${refusals})` : ''}`;
+      return `${f.via === 'commons' ? 'Wikidata / Wikimedia' : 'Recherche IA'} : ${f.list.length} photo(s) repérée(s)${f.pages ? ` dans ${f.pages} page(s)` : ''}, ${d.imgs.length} utilisable(s)${refusals ? ` (refus : ${refusals})` : ''}`;
     };
     notes.push(describe(found, dl));
     // Sites des fabricants inaccessibles : on tente les photos libres de Wikimedia

@@ -108,7 +108,7 @@ export const commonsSearchUrl = (brand: string, model: string) =>
   }).toString();
 
 /** Lecture de la réponse Commons : seules les photos dont le titre cite le modèle sont gardées */
-export function parseCommons(json: any, tokens: string[], max = 8): FreeImage[] {
+export function parseCommons(json: any, tokens: string[], max = 8, checkTitle = true): FreeImage[] {
   const pages: any[] = Object.values(json?.query?.pages || {});
   const out: Array<FreeImage & { hits: number }> = [];
   const modelTokens = tokens.filter((t) => /\d/.test(t) || t.length >= 4);
@@ -118,8 +118,8 @@ export function parseCommons(json: any, tokens: string[], max = 8): FreeImage[] 
     const info = p?.imageinfo?.[0];
     if (!info || Math.max(info.width || 0, info.height || 0) < 600) continue;
     const title = String(p.title || '').toLowerCase();
-    const hits = modelTokens.filter((t) => title.includes(t)).length;
-    if (!hits || !markers.every((t) => new RegExp(`(^|[^a-z0-9])${t}([^a-z0-9]|$)`).test(title))) continue;
+    const hits = checkTitle ? modelTokens.filter((t) => title.includes(t)).length : 1;
+    if (checkTitle && (!hits || !markers.every((t) => new RegExp(`(^|[^a-z0-9])${t}([^a-z0-9]|$)`).test(title)))) continue;
     const meta = info.extmetadata || {};
     const license = stripTags(String(meta.LicenseShortName?.value || ''));
     const artist = stripTags(String(meta.Artist?.value || ''));
@@ -131,4 +131,66 @@ export function parseCommons(json: any, tokens: string[], max = 8): FreeImage[] 
     });
   }
   return out.sort((a, b) => b.hits - a.hits).slice(0, max).map(({ hits: _h, ...x }) => x);
+}
+
+// ─── Wikidata : photo de référence (propriété P18) de la fiche du modèle — gratuit, sans clé ───
+
+/** Le libellé cite-t-il bien ce modèle (tous les repères chiffrés : « a55 », « 15 », « ultra 3 »…) ? */
+export function labelMatches(label: string, tokens: string[]) {
+  const l = label.toLowerCase();
+  const strong = tokens.filter((t) => /\d/.test(t) || t.length >= 4);
+  const markers = strong.filter((t) => /\d/.test(t) && (t.length >= 3 || /^\d+$/.test(t)));
+  const hits = strong.filter((t) => l.includes(t)).length;
+  return hits > 0 && markers.every((t) => new RegExp(`(^|[^a-z0-9])${t}([^a-z0-9]|$)`).test(l));
+}
+
+export const wikidataSearchUrl = (brand: string, model: string) =>
+  'https://www.wikidata.org/w/api.php?' +
+  new URLSearchParams({
+    action: 'wbsearchentities',
+    format: 'json',
+    language: 'en',
+    type: 'item',
+    limit: '6',
+    search: `${brand} ${(model.toLowerCase().startsWith(brand.toLowerCase()) ? model.slice(brand.length) : model).trim()}`,
+  }).toString();
+
+/** Entités dont le libellé correspond au modèle */
+export function parseWikidataSearch(json: any, tokens: string[]): string[] {
+  return (json?.search || [])
+    .filter((r: any) => labelMatches(`${r?.label || ''} ${r?.match?.text || ''}`, tokens))
+    .map((r: any) => String(r.id))
+    .filter((id: string) => /^Q\d+$/.test(id))
+    .slice(0, 4);
+}
+
+export const wikidataEntitiesUrl = (ids: string[]) =>
+  'https://www.wikidata.org/w/api.php?' + new URLSearchParams({ action: 'wbgetentities', format: 'json', ids: ids.join('|'), props: 'claims' }).toString();
+
+/** Fichiers Commons des photos de référence (P18) */
+export function parseWikidataImages(json: any): string[] {
+  const files: string[] = [];
+  for (const e of Object.values<any>(json?.entities || {})) {
+    for (const c of e?.claims?.P18 || []) {
+      const f = c?.mainsnak?.datavalue?.value;
+      if (typeof f === 'string' && f.length < 250) files.push(f);
+    }
+  }
+  return [...new Set(files)].slice(0, 6);
+}
+
+export const commonsFilesUrl = (files: string[]) =>
+  'https://commons.wikimedia.org/w/api.php?' +
+  new URLSearchParams({
+    action: 'query',
+    format: 'json',
+    titles: files.map((f) => `File:${f}`).join('|'),
+    prop: 'imageinfo',
+    iiprop: 'url|size|extmetadata',
+    iiurlwidth: '1280',
+  }).toString();
+
+/** Photos des fichiers demandés (le modèle est déjà vérifié par Wikidata : pas de contrôle du titre) */
+export function parseCommonsFiles(json: any): FreeImage[] {
+  return parseCommons(json, ['__toujours__'], 6, false);
 }
