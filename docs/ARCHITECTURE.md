@@ -151,7 +151,8 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 
 ## Photos par l'IA (`ai-images/`, `/platform/ai-images`, administrateur)
 - **Google Gemini** par l'API REST (`gemini.client.ts`, jeton `AI_CLIENT`) : `GEMINI_API_KEY` (facultatif, sans elle l'outil
-  est désactivé) et `GEMINI_MODEL` (défaut `gemini-2.5-flash`), dans l'environnement uniquement ; clé envoyée en en-tête.
+  est désactivé) et `GEMINI_MODEL` (défaut `gemini-3.8-flash` ; modèle retiré par Google →
+  bascule automatique sur le modèle conseillé dans sa réponse, sinon lot arrêté avec la raison), dans l'environnement uniquement ; clé envoyée en en-tête.
 - **Lots** `ai_image_jobs` (`POST /jobs` : `deviceIds`, ou `selection: missing-popular` + `limit` ≤ 200 = appareils sans photo
   les plus utilisés, sans ceux déjà en attente ; `auto`, `minScore`, `perDevice`). Traités en arrière-plan, un lot à la fois,
   2 appareils en parallèle, repris après un redémarrage (`doneIds`), arrêt possible (`/jobs/:id/cancel`) ; clé refusée /

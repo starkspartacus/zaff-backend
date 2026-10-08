@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { DEFAULT_GEMINI_MODEL } from '../../../config/env.validation';
 
 export type AiPart = { text: string } | { image: Buffer; mime: string };
 
@@ -37,11 +38,16 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 export class GeminiClient implements AiClient {
   private readonly logger = new Logger(GeminiClient.name);
   private readonly key: string | null;
-  readonly model: string;
+  private current: string;
+  private switched = false;
 
   constructor(config: ConfigService) {
     this.key = config.get<string | null>('ai.geminiApiKey') || null;
-    this.model = config.get<string>('ai.geminiModel') || 'gemini-2.5-flash';
+    this.current = config.get<string>('ai.geminiModel') || DEFAULT_GEMINI_MODEL;
+  }
+
+  get model() {
+    return this.current;
   }
 
   get enabled() {
@@ -66,7 +72,7 @@ export class GeminiClient implements AiClient {
 
     // Quota dépassé (429) ou surcharge (503) : nouvelle tentative après une pause croissante
     for (let attempt = 0; ; attempt++) {
-      const res = await fetch(`${ENDPOINT}/${encodeURIComponent(this.model)}:generateContent`, {
+      const res = await fetch(`${ENDPOINT}/${encodeURIComponent(this.current)}:generateContent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-goog-api-key': this.key },
         body: JSON.stringify(body),
@@ -81,6 +87,18 @@ export class GeminiClient implements AiClient {
       const json: any = await res.json().catch(() => ({}));
       if (!res.ok) {
         const msg = json?.error?.message || `HTTP ${res.status}`;
+        // Modèle retiré / inconnu : Google indique souvent le remplaçant (« use models/gemini-x-flash ») → on bascule une fois
+        if (/no longer available|not found|is not supported|deprecated|unknown model/i.test(msg)) {
+          const next = msg.match(/use\s+models\/([a-z0-9.-]{3,60})/i)?.[1];
+          if (next && !this.switched && next !== this.current) {
+            this.logger.warn(`Modèle Gemini « ${this.current} » retiré : passage à « ${next} ». Indiquez GEMINI_MODEL=${next} dans l'environnement.`);
+            this.current = next;
+            this.switched = true;
+            attempt = -1;
+            continue;
+          }
+          throw new AiUnavailable(`Le modèle Gemini « ${this.current} » n'est pas disponible pour cette clé : choisissez-en un autre avec GEMINI_MODEL (${msg})`);
+        }
         if (res.status === 400 || res.status === 403) throw new AiUnavailable(`Gemini refuse la requête : ${msg}`);
         throw new Error(`Gemini : ${msg}`);
       }

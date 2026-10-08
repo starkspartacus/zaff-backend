@@ -26,6 +26,8 @@ export interface EnvVars {
 }
 
 const MIN_SECRET_LENGTH = 32;
+/** Modèle Gemini par défaut (les anciens modèles sont retirés par Google au fil du temps : GEMINI_MODEL pour en changer) */
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
 
 export function validateEnv(raw: Record<string, unknown>): EnvVars {
   const get = (key: string) => (typeof raw[key] === 'string' ? (raw[key] as string).trim() : '');
@@ -63,8 +65,8 @@ export function validateEnv(raw: Record<string, unknown>): EnvVars {
 
   const geminiKey = get('GEMINI_API_KEY');
   if (geminiKey && geminiKey.length < 20) errors.push('GEMINI_API_KEY semble incomplète (Google AI Studio > Get API key).');
-  const geminiModel = get('GEMINI_MODEL') || 'gemini-2.5-flash';
-  if (!/^[a-z0-9.-]{3,60}$/.test(geminiModel)) errors.push('GEMINI_MODEL invalide (ex. : gemini-2.5-flash).');
+  const geminiModel = get('GEMINI_MODEL') || DEFAULT_GEMINI_MODEL;
+  if (!/^[a-z0-9.-]{3,60}$/.test(geminiModel)) errors.push('GEMINI_MODEL invalide (ex. : gemini-3.8-flash).');
 
   const port = Number(get('PORT') || 8000);
   if (!Number.isInteger(port) || port <= 0) errors.push('PORT doit être un nombre entier positif.');
