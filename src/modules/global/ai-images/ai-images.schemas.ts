@@ -7,8 +7,12 @@ export type AiImageCandidateDocument = AiImageCandidate & Document;
 /** Recherche de photos par l'IA pour un lot d'appareils (traitée en arrière-plan, reprise après un redémarrage) */
 @Schema({ timestamps: true, collection: 'ai_image_jobs' })
 export class AiImageJob {
-  @Prop({ default: 'queued', enum: ['queued', 'running', 'done', 'cancelled', 'failed'], index: true })
-  status: 'queued' | 'running' | 'done' | 'cancelled' | 'failed';
+  @Prop({ default: 'queued', enum: ['queued', 'running', 'paused', 'done', 'cancelled', 'failed'], index: true })
+  status: 'queued' | 'running' | 'paused' | 'done' | 'cancelled' | 'failed';
+
+  /** En pause (quota gratuit des IA atteint) : reprise automatique à cette heure */
+  @Prop({ default: null })
+  resumeAt: Date;
 
   @Prop({ type: [String], default: [] })
   deviceIds: string[];

@@ -5,10 +5,10 @@ import { Model, Types } from 'mongoose';
 import { GLOBAL_CONNECTION } from '../../../database/database.constants';
 import { DevicesService } from '../devices/devices.service';
 import { imageKey } from '../images/images.service';
-import { AI_CLIENT, AiClient, AiPart, AiUnavailable, parseJsonLoose } from './gemini.client';
+import { AI_CLIENT, AiClient, AiPart, AiQuotaExceeded, AiUnavailable, parseJsonLoose } from './gemini.client';
 import { AiImageCandidate, AiImageCandidateDocument, AiImageJob, AiImageJobDocument } from './ai-images.schemas';
 import { ImageRejected, NormalizedImage, normalizeProductImage } from './image-normalize';
-import { domainOf, extractImageUrls, modelTokens } from './image-sources';
+import { commonsSearchUrl, domainOf, extractImageUrls, modelTokens, parseCommons } from './image-sources';
 import { safeFetch, SafeFetchOptions, FetchResult } from './safe-fetch';
 
 export type Fetcher = (url: string, opts: SafeFetchOptions) => Promise<FetchResult>;
@@ -75,6 +75,8 @@ const VERDICT_SCHEMA = {
   required: ['images'],
 };
 
+const sooner = (a: Date | null, b: Date) => (!a || b.getTime() < a.getTime() ? b : a);
+
 /** Exécute `fn` sur la liste avec au plus `n` tâches en parallèle */
 async function pool<T>(items: T[], n: number, fn: (item: T) => Promise<void>) {
   const queue = [...items];
@@ -115,7 +117,8 @@ export class AiImagesService implements OnApplicationBootstrap {
   }
 
   status() {
-    return { enabled: this.ai.enabled, model: this.ai.model };
+    const providers = typeof (this.ai as any).describe === 'function' ? (this.ai as any).describe() : [{ label: this.ai.model, search: true, coolingUntil: null }];
+    return { enabled: this.ai.enabled, model: this.ai.model, providers, freeSearch: 'Wikimedia Commons' };
   }
 
   // ─── Lots ───
@@ -144,6 +147,7 @@ export class AiImagesService implements OnApplicationBootstrap {
       notFound: 0,
       failures: 0,
       lastError: null,
+      resumeAt: null,
       finishedAt: null,
       total: ids.length,
       auto: !!input.auto,
@@ -169,6 +173,7 @@ export class AiImagesService implements OnApplicationBootstrap {
       auto: j.auto,
       minScore: j.minScore,
       lastError: j.lastError || null,
+      resumeAt: j.resumeAt || null,
       createdAt: j.createdAt,
       finishedAt: j.finishedAt || null,
     };
@@ -181,7 +186,7 @@ export class AiImagesService implements OnApplicationBootstrap {
 
   async cancelJob(id: string) {
     if (!Types.ObjectId.isValid(id)) throw new NotFoundException('Lot introuvable.');
-    await this.jobs.updateOne({ _id: id, status: { $in: ['queued', 'running'] } }, { $set: { status: 'cancelled', finishedAt: new Date() } });
+    await this.jobs.updateOne({ _id: id, status: { $in: ['queued', 'running', 'paused'] } }, { $set: { status: 'cancelled', finishedAt: new Date() } });
     return { cancelled: true };
   }
 
@@ -196,10 +201,26 @@ export class AiImagesService implements OnApplicationBootstrap {
 
   private async drain() {
     for (;;) {
-      const job: any = await this.jobs.findOneAndUpdate({ status: 'queued' }, { $set: { status: 'running' } }, { new: true, sort: { createdAt: 1 } }).lean().exec();
-      if (!job) return;
+      const job: any = await this.jobs
+        .findOneAndUpdate({ $or: [{ status: 'queued' }, { status: 'paused', resumeAt: { $lte: new Date() } }] }, { $set: { status: 'running', resumeAt: null } }, { new: true, sort: { createdAt: 1 } })
+        .lean()
+        .exec();
+      if (!job) return this.scheduleResume();
       await this.runJob(job);
     }
+  }
+
+  private resumeTimer: NodeJS.Timeout | null = null;
+
+  /** Lot en pause (quota gratuit) : réveil automatique à l'heure de reprise */
+  private async scheduleResume() {
+    const next: any = await this.jobs.findOne({ status: 'paused' }).sort({ resumeAt: 1 }).lean().exec();
+    if (this.resumeTimer) clearTimeout(this.resumeTimer);
+    this.resumeTimer = null;
+    if (!next?.resumeAt) return;
+    const ms = Math.max(5_000, new Date(next.resumeAt).getTime() - Date.now());
+    this.resumeTimer = setTimeout(() => this.kick(), Math.min(ms, 2 ** 31 - 1));
+    this.resumeTimer.unref?.();
   }
 
   private async isCancelled(id: unknown) {
@@ -210,8 +231,9 @@ export class AiImagesService implements OnApplicationBootstrap {
   private async runJob(job: any) {
     const todo = (job.deviceIds as string[]).filter((id) => !(job.doneIds || []).includes(id));
     let stopped = false;
+    const pause: { until: Date | null } = { until: null };
     await pool(todo, DEVICE_CONCURRENCY, async (deviceId) => {
-      if (stopped || (await this.isCancelled(job._id))) return void (stopped = true);
+      if (stopped || pause.until || (await this.isCancelled(job._id))) return void (stopped = stopped || !pause.until);
       const inc: Record<string, number> = { processed: 1 };
       try {
         const device = await this.devices.get(deviceId);
@@ -220,6 +242,11 @@ export class AiImagesService implements OnApplicationBootstrap {
         inc.published = r.published;
         if (!r.kept) inc.notFound = 1;
       } catch (e: any) {
+        // Quota gratuit épuisé partout : cet appareil sera repris avec le reste du lot
+        if (e instanceof AiQuotaExceeded) {
+          pause.until = sooner(pause.until, e.resumeAt);
+          return;
+        }
         inc.failures = 1;
         this.logger.warn(`Photos IA (${deviceId}) : ${e.message}`);
         await this.jobs.updateOne({ _id: job._id }, { $set: { lastError: String(e.message).slice(0, 300) } });
@@ -228,9 +255,17 @@ export class AiImagesService implements OnApplicationBootstrap {
       }
       await this.jobs.updateOne({ _id: job._id }, { $inc: inc, $addToSet: { doneIds: deviceId } });
     });
-    if (!(await this.isCancelled(job._id))) {
-      await this.jobs.updateOne({ _id: job._id }, { $set: { status: stopped ? 'failed' : 'done', finishedAt: new Date() } });
+    if (await this.isCancelled(job._id)) return;
+    if (pause.until && !stopped) {
+      const at = pause.until;
+      await this.jobs.updateOne(
+        { _id: job._id },
+        { $set: { status: 'paused', resumeAt: at, lastError: `Quota gratuit des IA atteint : reprise automatique vers ${at.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}.` } },
+      );
+      this.logger.warn(`Photos IA en pause jusqu'à ${at.toISOString()} (quota gratuit)`);
+      return;
     }
+    await this.jobs.updateOne({ _id: job._id }, { $set: { status: stopped ? 'failed' : 'done', finishedAt: new Date() } });
   }
 
   // ─── Recherche pour un appareil ───
@@ -247,17 +282,39 @@ export class AiImagesService implements OnApplicationBootstrap {
       'Reply ONLY with JSON: {"images":[{"url":"direct image URL","page":"page URL","color":"colour or null"}],"pages":["product page URL"]}.',
       'Give up to 10 images and 5 pages. Only URLs you actually found.',
     ].join('\n');
-    const res = await this.ai.generate({ parts: [{ text: prompt }], search: true, temperature: 0.1 });
+    let res;
+    try {
+      res = await this.ai.generate({ parts: [{ text: prompt }], search: true, temperature: 0.1 });
+    } catch (e) {
+      if (!(e instanceof AiQuotaExceeded)) throw e;
+      // Recherche Google épuisée : photos libres de Wikimedia Commons (gratuit, sans clé, auteur et licence gardés)
+      return { images: await this.commons(device), pages: [] as string[] };
+    }
     const json = parseJsonLoose<{ images?: { url?: string; page?: string; color?: string | null }[]; pages?: string[] }>(res.text) || {};
-    const images = (json.images || []).filter((i) => typeof i?.url === 'string').slice(0, 10);
+    const images: Array<{ url?: string; page?: string; color?: string | null; credit?: string | null }> = (json.images || []).filter((i) => typeof i?.url === 'string').slice(0, 10);
     const pages = [...new Set([...(json.pages || []), ...images.map((i) => i.page || ''), ...res.sources.map((s) => s.uri)].filter((p) => typeof p === 'string' && /^https?:\/\//.test(p)))].slice(0, 6);
     return { images, pages };
   }
 
+  private async commons(device: Device) {
+    try {
+      const res = await this.fetcher(commonsSearchUrl(device.brand, device.model), { maxBytes: 2_000_000, timeoutMs: 10000, accept: 'application/json' });
+      return parseCommons(JSON.parse(res.buffer.toString('utf8')), modelTokens(device.brand, device.model)).map((x) => ({ url: x.url, page: x.page || undefined, credit: x.credit }));
+    } catch {
+      return [];
+    }
+  }
+
+  private readonly credits = new Map<string, string>();
+
   private async collectUrls(device: Device) {
     const { images, pages } = await this.searchSources(device);
     const urls = new Map<string, string | null>(); // photo → page d'origine
-    for (const i of images) if (/^https?:\/\//.test(i.url!)) urls.set(i.url!, i.page || null);
+    for (const i of images) {
+      if (!/^https?:\/\//.test(i.url!)) continue;
+      urls.set(i.url!, i.page || null);
+      if (i.credit) this.credits.set(i.url!, i.credit);
+    }
     const tokens = modelTokens(device.brand, device.model);
     await pool(pages, 3, async (page) => {
       try {
@@ -272,7 +329,7 @@ export class AiImagesService implements OnApplicationBootstrap {
   }
 
   private async downloadAll(list: [string, string | null][]) {
-    const out: Array<{ url: string; page: string | null; img: NormalizedImage; sha256: string }> = [];
+    const out: Array<{ url: string; page: string | null; img: NormalizedImage; sha256: string; credit: string | null }> = [];
     const seen = new Set<string>();
     await pool(list, 4, async ([url, page]) => {
       try {
@@ -281,7 +338,7 @@ export class AiImagesService implements OnApplicationBootstrap {
         const sha256 = createHash('sha256').update(img.full).digest('hex');
         if (seen.has(sha256)) return;
         seen.add(sha256);
-        out.push({ url: res.url, page, img, sha256 });
+        out.push({ url: res.url, page, img, sha256, credit: this.credits.get(url) || null });
       } catch (e) {
         if (!(e instanceof ImageRejected)) this.logger.debug?.(`Téléchargement refusé ${url} : ${(e as Error).message}`);
       }
@@ -357,7 +414,7 @@ export class AiImagesService implements OnApplicationBootstrap {
         deviceId: device.id,
         color: s.color,
         score: s.score,
-        verdict: { view: s.v.view, cleanBackground: s.v.cleanBackground, textOrWatermark: s.v.textOrWatermark, aiScore: s.v.score, reason: s.v.reason, aiColor: s.v.color || null },
+        verdict: { view: s.v.view, cleanBackground: s.v.cleanBackground, textOrWatermark: s.v.textOrWatermark, aiScore: s.v.score, reason: s.v.reason, aiColor: s.v.color || null, credit: s.x.credit },
         sourceUrl: s.x.url,
         pageUrl: s.x.page,
         sha256: s.x.sha256,

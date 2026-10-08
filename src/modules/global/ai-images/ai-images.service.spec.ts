@@ -3,9 +3,9 @@ import { FakeModel } from '../../../testing/fake-model';
 import { ImagesService } from '../images/images.service';
 import { DevicesService } from '../devices/devices.service';
 import { AiImagesService, Fetcher } from './ai-images.service';
-import { AiClient, AiRequest, AiUnavailable, parseJsonLoose } from './gemini.client';
+import { AiClient, AiQuotaExceeded, AiRequest, AiUnavailable, parseJsonLoose } from './gemini.client';
 import { normalizeProductImage, ImageRejected } from './image-normalize';
-import { extractImageUrls, modelTokens } from './image-sources';
+import { commonsSearchUrl, extractImageUrls, modelTokens, parseCommons } from './image-sources';
 import { isPublicAddress, safeFetch } from './safe-fetch';
 
 const photo = (color: string, w = 1600, h = 900) =>
@@ -20,9 +20,13 @@ class FakeAi implements AiClient {
   calls: AiRequest[] = [];
   verdicts: any[] = [];
   failWith: Error | null = null;
+  searchQuota: Date | null = null;
+  reviewQuota: Date | null = null;
   async generate(req: AiRequest) {
     this.calls.push(req);
     if (this.failWith) throw this.failWith;
+    if (req.search && this.searchQuota) throw new AiQuotaExceeded('quota', this.searchQuota);
+    if (!req.search && this.reviewQuota) throw new AiQuotaExceeded('quota', this.reviewQuota);
     if (req.search) {
       return {
         text: 'Voici :\n```json\n{"images":[{"url":"https://cdn.samsung.com/a55-noir.png","page":"https://www.samsung.com/a55","color":"Noir"}],"pages":["https://www.samsung.com/a55"]}\n```',
@@ -51,6 +55,14 @@ describe('Photos des appareils trouvées par l\'IA', () => {
       return { buffer: Buffer.from(html), contentType: 'text/html; charset=utf-8', url };
     }
     if (url === 'https://shop.example.com/galaxy-a55') return { buffer: Buffer.from('<img data-src="https://shop.example.com/a55.svg">'), contentType: 'text/html', url };
+    if (url.startsWith('https://commons.wikimedia.org/w/api.php')) {
+      const page = (title: string, file: string, w = 1600) => ({ title, imageinfo: [{ thumburl: file, descriptionurl: 'https://commons.wikimedia.org/wiki/' + title, width: w, height: 900, extmetadata: { LicenseShortName: { value: 'CC BY-SA 4.0' }, Artist: { value: '<a href="#">Jean Photo</a>' } } }] });
+      return {
+        buffer: Buffer.from(JSON.stringify({ query: { pages: { 1: page('File:Samsung Galaxy A55 noir.jpg', 'https://cdn.samsung.com/a55-noir.png'), 2: page('File:Samsung Galaxy A54.jpg', 'https://upload.example.org/a54.png'), 3: page('File:Galaxy A55 mini.jpg', 'https://x/y.png', 300) } } })),
+        contentType: 'application/json',
+        url,
+      };
+    }
     if (files[url]) return { buffer: files[url], contentType: 'image/png', url };
     throw new Error('HTTP 404');
   };
@@ -181,5 +193,44 @@ describe('Photos des appareils trouvées par l\'IA', () => {
     await expect(safeFetch('http://169.254.169.254/latest/meta-data', { maxBytes: 1000 })).rejects.toThrow(/non publique/);
     await expect(safeFetch('file:///etc/passwd', { maxBytes: 1000 })).rejects.toThrow(/Protocole/);
     await expect(safeFetch('http://localhost:8000/', { maxBytes: 1000 })).rejects.toThrow(/non publique/);
+  });
+
+  it('quota gratuit épuisé pour la recherche : photos libres de Wikimedia Commons, avec le crédit de l\'auteur', async () => {
+    const dev = await a55();
+    ai.searchQuota = new Date(Date.now() + 3600_000);
+    ai.verdicts = [{ index: 0, sameModel: true, productPhoto: true, view: 'front', color: 'Noir', cleanBackground: true, textOrWatermark: false, score: 88, reason: 'Photo de face' }];
+    await service.createJob({ deviceIds: [dev.id] });
+    await service.kick();
+    const [c] = await service.listCandidates({});
+    expect(c).toMatchObject({ score: 88, source: 'commons.wikimedia.org', verdict: { credit: 'Photo : Jean Photo, CC BY-SA 4.0, Wikimedia Commons' } });
+    expect(fetched.some((u) => u.includes('a54'))).toBe(false); // autre modèle écarté par le titre
+  });
+
+  it('quota épuisé pour la vérification : le lot se met en pause puis reprend tout seul là où il en était', async () => {
+    const dev = await a55();
+    ai.reviewQuota = new Date(Date.now() + 3600_000);
+    ai.verdicts = [{ index: 0, sameModel: true, productPhoto: true, view: 'front', color: 'Noir', cleanBackground: true, textOrWatermark: false, score: 91, reason: 'OK' }];
+    const job = await service.createJob({ deviceIds: [dev.id] });
+    await service.kick();
+    let [j] = await service.listJobs();
+    expect(j).toMatchObject({ status: 'paused', processed: 0, errors: 0, resumeAt: ai.reviewQuota, lastError: expect.stringMatching(/reprise automatique/) });
+    expect(await service.listCandidates({})).toHaveLength(0);
+    // L'heure de reprise est passée et le quota revenu
+    ai.reviewQuota = null;
+    jobs.docs.find((d) => String(d._id) === job.id).resumeAt = new Date(Date.now() - 1000);
+    await service.kick();
+    [j] = await service.listJobs();
+    expect(j).toMatchObject({ status: 'done', processed: 1, found: expect.any(Number) });
+    expect((await service.listCandidates({})).length).toBeGreaterThan(0);
+  });
+
+  it('Commons : seuls les fichiers dont le titre cite exactement le modèle', () => {
+    expect(commonsSearchUrl('Samsung', 'Samsung Galaxy A55 5G')).toContain('gsrsearch=filetype%3Abitmap+Samsung+Galaxy+A55+5G');
+    const json = { query: { pages: {
+      a: { title: 'File:Samsung Galaxy A55.jpg', imageinfo: [{ url: 'u1', width: 2000, height: 1500, extmetadata: {} }] },
+      b: { title: 'File:Samsung Galaxy A550.jpg', imageinfo: [{ url: 'u2', width: 2000, height: 1500, extmetadata: {} }] },
+      c: { title: 'File:Galaxy A55 tiny.jpg', imageinfo: [{ url: 'u3', width: 200, height: 150, extmetadata: {} }] },
+    } } };
+    expect(parseCommons(json, modelTokens('Samsung', 'Galaxy A55 5G')).map((x) => x.url)).toEqual(['u1']);
   });
 });

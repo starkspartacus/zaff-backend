@@ -24,6 +24,9 @@ export default () => {
     ai: {
       geminiApiKey: env.GEMINI_API_KEY,
       geminiModel: env.GEMINI_MODEL,
+      geminiFallbackModels: env.GEMINI_FALLBACK_MODELS,
+      geminiRpm: env.GEMINI_RPM,
+      fallback: { url: env.AI_FALLBACK_URL, key: env.AI_FALLBACK_KEY, model: env.AI_FALLBACK_MODEL, rpm: env.AI_FALLBACK_RPM },
     },
     push: {
       publicKey: env.VAPID_PUBLIC_KEY,

@@ -153,6 +153,14 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 - **Google Gemini** par l'API REST (`gemini.client.ts`, jeton `AI_CLIENT`) : `GEMINI_API_KEY` (facultatif, sans elle l'outil
   est désactivé) et `GEMINI_MODEL` (défaut `gemini-3.8-flash` ; modèle retiré par Google →
   bascule automatique sur le modèle conseillé dans sa réponse, sinon lot arrêté avec la raison), dans l'environnement uniquement ; clé envoyée en en-tête.
+- **Secours pour les paliers gratuits** (`GeminiClient`, qui gère plusieurs fournisseurs) : appels espacés (`GEMINI_RPM` par
+  modèle, 8 par défaut) ; modèles Gemini de secours (`GEMINI_FALLBACK_MODELS` + autres modèles « flash » stables découverts
+  sur la clé, chacun avec son quota) ; 429 → délai exact de Google (RetryInfo), quota du jour → nouvel essai dans 1 h, passage
+  immédiat au modèle suivant ; IA de secours au format OpenAI (`AI_FALLBACK_URL` / `_KEY` / `_MODEL` / `_RPM` : Groq,
+  OpenRouter…) pour la **vérification** seulement ; recherche épuisée → **Wikimedia Commons** (gratuit, sans clé, photos
+  dont le titre cite le modèle, crédit auteur + licence gardé dans `verdict.credit`) ; tout épuisé → `AiQuotaExceeded` :
+  le lot passe en **`paused`** (`resumeAt`) et reprend tout seul (minuterie, aussi après redémarrage), sans perdre d'appareil.
+  `GET /status` liste les fournisseurs et ceux en attente de quota.
 - **Lots** `ai_image_jobs` (`POST /jobs` : `deviceIds`, ou `selection: missing-popular` + `limit` ≤ 200 = appareils sans photo
   les plus utilisés, sans ceux déjà en attente ; `auto`, `minScore`, `perDevice`). Traités en arrière-plan, un lot à la fois,
   2 appareils en parallèle, repris après un redémarrage (`doneIds`), arrêt possible (`/jobs/:id/cancel`) ; clé refusée /

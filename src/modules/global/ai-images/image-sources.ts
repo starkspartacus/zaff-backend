@@ -81,3 +81,53 @@ export const domainOf = (url: string | null | undefined) => {
     return null;
   }
 };
+
+export interface FreeImage {
+  url: string;
+  page: string | null;
+  /** Auteur et licence, à citer (« Photo : X, CC BY-SA 4.0, Wikimedia Commons ») */
+  credit: string | null;
+}
+
+const stripTags = (s: string) => s.replace(/<[^>]*>/g, '').replace(/\s+/g, ' ').trim();
+
+/** Adresse de recherche Wikimedia Commons (gratuit, sans clé) : photos du modèle, ≥ 600 px */
+export const commonsSearchUrl = (brand: string, model: string) =>
+  'https://commons.wikimedia.org/w/api.php?' +
+  new URLSearchParams({
+    action: 'query',
+    format: 'json',
+    generator: 'search',
+    gsrnamespace: '6',
+    gsrlimit: '15',
+    gsrsearch: `filetype:bitmap ${brand} ${(model.toLowerCase().startsWith(brand.toLowerCase()) ? model.slice(brand.length) : model).trim()}`,
+    prop: 'imageinfo',
+    iiprop: 'url|size|extmetadata',
+    iiurlwidth: '1200',
+  }).toString();
+
+/** Lecture de la réponse Commons : seules les photos dont le titre cite le modèle sont gardées */
+export function parseCommons(json: any, tokens: string[], max = 8): FreeImage[] {
+  const pages: any[] = Object.values(json?.query?.pages || {});
+  const out: Array<FreeImage & { hits: number }> = [];
+  const modelTokens = tokens.filter((t) => /\d/.test(t) || t.length >= 4);
+  // Repères du modèle (« a55 », « 15 ») : tous doivent figurer dans le titre ; « 5g » seul n'en est pas un
+  const markers = modelTokens.filter((t) => /\d/.test(t) && (t.length >= 3 || /^\d+$/.test(t)));
+  for (const p of pages) {
+    const info = p?.imageinfo?.[0];
+    if (!info || Math.max(info.width || 0, info.height || 0) < 600) continue;
+    const title = String(p.title || '').toLowerCase();
+    const hits = modelTokens.filter((t) => title.includes(t)).length;
+    if (!hits || !markers.every((t) => new RegExp(`(^|[^a-z0-9])${t}([^a-z0-9]|$)`).test(title))) continue;
+    const meta = info.extmetadata || {};
+    const license = stripTags(String(meta.LicenseShortName?.value || ''));
+    const artist = stripTags(String(meta.Artist?.value || ''));
+    out.push({
+      url: String(info.thumburl || info.url),
+      page: info.descriptionurl ? String(info.descriptionurl) : null,
+      credit: [artist && `Photo : ${artist}`, license, 'Wikimedia Commons'].filter(Boolean).join(', ') || null,
+      hits,
+    });
+  }
+  return out.sort((a, b) => b.hits - a.hits).slice(0, max).map(({ hits: _h, ...x }) => x);
+}

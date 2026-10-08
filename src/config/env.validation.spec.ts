@@ -32,6 +32,12 @@ describe('validateEnv', () => {
       PLATFORM_ADMIN_PASSWORD: null,
       GEMINI_API_KEY: null,
       GEMINI_MODEL: 'gemini-3.8-flash',
+      GEMINI_FALLBACK_MODELS: [],
+      GEMINI_RPM: 8,
+      AI_FALLBACK_URL: null,
+      AI_FALLBACK_KEY: null,
+      AI_FALLBACK_MODEL: null,
+      AI_FALLBACK_RPM: 20,
     });
   });
 
