@@ -21,6 +21,10 @@ export default () => {
     media: {
       uploadthingToken: env.UPLOADTHING_TOKEN,
     },
+    ai: {
+      geminiApiKey: env.GEMINI_API_KEY,
+      geminiModel: env.GEMINI_MODEL,
+    },
     push: {
       publicKey: env.VAPID_PUBLIC_KEY,
       privateKey: env.VAPID_PRIVATE_KEY,

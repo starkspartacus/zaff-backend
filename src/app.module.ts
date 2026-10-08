@@ -7,6 +7,7 @@ import { DirectoryModule } from './modules/global/directory/directory.module';
 import { ReferenceModule } from './modules/global/reference/reference.module';
 import { ImagesModule } from './modules/global/images/images.module';
 import { DevicesModule } from './modules/global/devices/devices.module';
+import { AiImagesModule } from './modules/global/ai-images/ai-images.module';
 import { PlatformModule } from './modules/global/platform/platform.module';
 import { GeoModule } from './modules/global/geo/geo.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
@@ -38,6 +39,7 @@ import { ContractsModule } from './modules/tenant/contracts/contracts.module';
     ReferenceModule,
     ImagesModule,
     DevicesModule,
+    AiImagesModule,
     PlatformModule,
     GeoModule,
     RealtimeModule,

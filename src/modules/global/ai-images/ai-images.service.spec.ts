@@ -1,0 +1,185 @@
+import sharp from 'sharp';
+import { FakeModel } from '../../../testing/fake-model';
+import { ImagesService } from '../images/images.service';
+import { DevicesService } from '../devices/devices.service';
+import { AiImagesService, Fetcher } from './ai-images.service';
+import { AiClient, AiRequest, AiUnavailable, parseJsonLoose } from './gemini.client';
+import { normalizeProductImage, ImageRejected } from './image-normalize';
+import { extractImageUrls, modelTokens } from './image-sources';
+import { isPublicAddress, safeFetch } from './safe-fetch';
+
+const photo = (color: string, w = 1600, h = 900) =>
+  sharp({ create: { width: w, height: h, channels: 3, background: '#ffffff' } })
+    .composite([{ input: { create: { width: Math.round(w / 3), height: Math.round(h * 0.8), channels: 3, background: color } }, gravity: 'center' }])
+    .png()
+    .toBuffer();
+
+class FakeAi implements AiClient {
+  enabled = true;
+  model = 'gemini-test';
+  calls: AiRequest[] = [];
+  verdicts: any[] = [];
+  failWith: Error | null = null;
+  async generate(req: AiRequest) {
+    this.calls.push(req);
+    if (this.failWith) throw this.failWith;
+    if (req.search) {
+      return {
+        text: 'Voici :\n```json\n{"images":[{"url":"https://cdn.samsung.com/a55-noir.png","page":"https://www.samsung.com/a55","color":"Noir"}],"pages":["https://www.samsung.com/a55"]}\n```',
+        sources: [{ uri: 'https://shop.example.com/galaxy-a55' }],
+      };
+    }
+    return { text: JSON.stringify({ images: this.verdicts }), sources: [] };
+  }
+}
+
+describe('Photos des appareils trouvées par l\'IA', () => {
+  let ai: FakeAi;
+  let service: AiImagesService;
+  let devices: DevicesService;
+  let imageModel: FakeModel;
+  let candidates: FakeModel;
+  let jobs: FakeModel;
+  const fetched: string[] = [];
+  let files: Record<string, Buffer>;
+
+  const fetcher: Fetcher = async (url) => {
+    fetched.push(url);
+    if (url === 'https://www.samsung.com/a55') {
+      const html = `<html><head><meta property="og:image" content="https://cdn.samsung.com/a55-bleu.png"></head>
+        <body><img src="/img/logo.png"><img src="https://cdn.samsung.com/galaxy-a55-violet.png"><img src="https://cdn.samsung.com/a55-mini.png"></body></html>`;
+      return { buffer: Buffer.from(html), contentType: 'text/html; charset=utf-8', url };
+    }
+    if (url === 'https://shop.example.com/galaxy-a55') return { buffer: Buffer.from('<img data-src="https://shop.example.com/a55.svg">'), contentType: 'text/html', url };
+    if (files[url]) return { buffer: files[url], contentType: 'image/png', url };
+    throw new Error('HTTP 404');
+  };
+
+  beforeAll(async () => {
+    files = {
+      'https://cdn.samsung.com/a55-noir.png': await photo('#111111'),
+      'https://cdn.samsung.com/a55-bleu.png': await photo('#9fc5e8'),
+      'https://cdn.samsung.com/galaxy-a55-violet.png': await photo('#b4a7d6'),
+      'https://cdn.samsung.com/a55-mini.png': await photo('#ff0000', 120, 80), // trop petite
+    };
+  });
+
+  beforeEach(async () => {
+    fetched.length = 0;
+    ai = new FakeAi();
+    imageModel = new FakeModel(['sha256']);
+    candidates = new FakeModel();
+    jobs = new FakeModel();
+    devices = new DevicesService(new FakeModel() as any, new ImagesService(imageModel as any));
+    await devices.onModuleInit();
+    service = new AiImagesService(jobs as any, candidates as any, devices, ai, fetcher);
+  });
+
+  const a55 = async () => {
+    const d = (await devices.list({ search: 'galaxy a55' })).items[0];
+    return devices.update(d.id, { colors: ['Noir', 'Bleu glacé', 'Lilas'] });
+  };
+
+  it('recherche, mise au format, vérification par l\'IA : la meilleure photo par coloris est proposée à l\'admin', async () => {
+    const dev = await a55();
+    ai.verdicts = [
+      { index: 0, sameModel: true, productPhoto: true, view: 'front', color: 'Noir', cleanBackground: true, textOrWatermark: false, score: 94, reason: 'Vue de face officielle' },
+      { index: 1, sameModel: true, productPhoto: true, view: 'front', color: 'bleu glace', cleanBackground: true, textOrWatermark: true, score: 85, reason: 'Logo du site en bas' },
+      { index: 2, sameModel: false, productPhoto: true, view: 'front', color: null, cleanBackground: true, textOrWatermark: false, score: 90, reason: 'Galaxy A54' },
+    ];
+    const job = await service.createJob({ deviceIds: [dev.id] });
+    await service.kick();
+
+    // Pages visitées, logo / SVG / image trop petite écartés, 3 photos envoyées à l'IA
+    expect(fetched).toEqual(expect.arrayContaining(['https://www.samsung.com/a55', 'https://shop.example.com/galaxy-a55']));
+    expect(fetched.some((u) => u.includes('logo') || u.endsWith('.svg'))).toBe(false);
+    const review = ai.calls[1];
+    expect(review.schema).toBeTruthy();
+    expect(review.parts.filter((p) => 'image' in p)).toHaveLength(3);
+
+    const list = await service.listCandidates({ jobId: job.id });
+    expect(list.map((c) => [c.color, c.score])).toEqual([['Noir', 94], ['Bleu glacé', 60]]); // texte : −25
+    expect(list[0]).toMatchObject({ source: 'samsung.com', status: 'pending', device: { brand: 'Samsung', model: 'Galaxy A55 5G', photos: 0 } });
+    const [j] = await service.listJobs();
+    expect(j).toMatchObject({ status: 'done', processed: 1, found: 2, published: 0 });
+
+    // Format ZAFF : carré WebP ≤ 1000 px + vignette 320 px
+    const full = await sharp(await service.preview(list[0].id, 'full')).metadata();
+    const thumb = await sharp(await service.preview(list[0].id, 'thumb')).metadata();
+    expect([full.format, full.width === full.height, full.width! <= 1000]).toEqual(['webp', true, true]);
+    expect([thumb.format, thumb.width]).toEqual(['webp', 320]);
+
+    // Publication : photo ajoutée à l'appareil (coloris compris), fichiers temporaires effacés
+    await service.publish(list[0].id);
+    const d = await devices.get(dev.id);
+    expect(d.photos).toEqual([{ imageId: expect.any(String), color: 'Noir' }]);
+    expect(candidates.docs.find((c) => String(c._id) === list[0].id)).toMatchObject({ status: 'published', full: null, thumb: null });
+    await expect(service.publish(list[0].id)).rejects.toThrow(/déjà été traitée/);
+
+    // Validation en masse du reste du lot
+    expect(await service.publishMany({ jobId: job.id, minScore: 50 })).toEqual({ published: 1, failed: 0 });
+    expect((await devices.get(dev.id)).photos).toHaveLength(2);
+    // Relancer la sélection automatique : l'A55 a maintenant des photos, il n'est plus proposé en tête
+    const next = await service.createJob({ selection: 'missing-popular', limit: 5 });
+    expect(next.total).toBe(5);
+  });
+
+  it('publication automatique au-dessus de la note choisie ; le reste attend la validation', async () => {
+    const dev = await a55();
+    ai.verdicts = [
+      { index: 0, sameModel: true, productPhoto: true, view: 'front', color: 'Noir', cleanBackground: true, textOrWatermark: false, score: 96, reason: 'Parfait' },
+      { index: 1, sameModel: true, productPhoto: true, view: 'angle', color: 'Bleu glacé', cleanBackground: true, textOrWatermark: false, score: 82, reason: 'Vue de trois quarts' },
+    ];
+    await service.createJob({ deviceIds: [dev.id], auto: true, minScore: 90 });
+    await service.kick();
+    expect((await devices.get(dev.id)).photos).toHaveLength(1);
+    expect((await service.listCandidates({})).map((c) => c.score)).toEqual([82]);
+    const [j] = await service.listJobs();
+    expect(j).toMatchObject({ found: 2, published: 1 });
+  });
+
+  it('clé refusée / quota épuisé : le lot s\'arrête avec la raison ; rejet d\'une photo', async () => {
+    const dev = await a55();
+    ai.failWith = new AiUnavailable('Gemini refuse la requête : API key not valid');
+    await service.createJob({ deviceIds: [dev.id, (await devices.list({ search: 'iphone 15' })).items[0].id] });
+    await service.kick();
+    const [j] = await service.listJobs();
+    expect(j).toMatchObject({ status: 'failed', errors: 2, lastError: expect.stringMatching(/API key/) });
+    ai.enabled = false;
+    await expect(service.createJob({ deviceIds: [dev.id] })).rejects.toThrow(/GEMINI_API_KEY/);
+  });
+
+  it('mise au format : petites images, SVG et fichiers illisibles refusés', async () => {
+    await expect(normalizeProductImage(await photo('#000', 200, 150))).rejects.toBeInstanceOf(ImageRejected);
+    await expect(normalizeProductImage(Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"></svg>'))).rejects.toBeInstanceOf(ImageRejected);
+    await expect(normalizeProductImage(Buffer.from('pas une image'))).rejects.toBeInstanceOf(ImageRejected);
+    const n = await normalizeProductImage(await photo('#333', 3000, 2000));
+    expect(n.full.length).toBeLessThan(550 * 1024);
+    expect((await sharp(n.full).metadata()).width).toBe(1000);
+  });
+
+  it('repérage des photos dans une page et lecture du JSON de l\'IA', () => {
+    const html = `<meta property="og:image" content="https://x.com/p/galaxy-a55-front.jpg?w=1200">
+      <script type="application/ld+json">{"image":["https:\\/\\/x.com\\/media\\/a55-back.webp"]}</script>
+      <img srcset="https://x.com/a55-480.jpg 480w, https://x.com/a55-1200.jpg 1200w"><img src="https://x.com/icons/cart.png"><img src="data:image/png;base64,AAAA">`;
+    const urls = extractImageUrls(html, 'https://x.com/a55', modelTokens('Samsung', 'Galaxy A55 5G'));
+    expect(urls[0]).toBe('https://x.com/p/galaxy-a55-front.jpg?w=1200');
+    expect(urls).toEqual(expect.arrayContaining(['https://x.com/media/a55-back.webp', 'https://x.com/a55-1200.jpg']));
+    expect(urls.some((u) => u.includes('icons') || u.includes('480'))).toBe(false);
+    expect(parseJsonLoose('blabla ```json\n{"a":1}\n``` fin')).toEqual({ a: 1 });
+    expect(parseJsonLoose('Réponse : {"images":[]} merci')).toEqual({ images: [] });
+    expect(parseJsonLoose('rien')).toBeNull();
+  });
+
+  it('téléchargement : adresses internes refusées (serveur, réseau local, métadonnées cloud)', async () => {
+    for (const ip of ['127.0.0.1', '10.1.2.3', '172.20.0.1', '192.168.1.10', '169.254.169.254', '100.64.0.1', '0.0.0.0', '::1', 'fd00::1', 'fe80::1', '::ffff:127.0.0.1']) {
+      expect([ip, isPublicAddress(ip)]).toEqual([ip, false]);
+    }
+    expect(isPublicAddress('8.8.8.8')).toBe(true);
+    expect(isPublicAddress('2001:4860:4860::8888')).toBe(true);
+    await expect(safeFetch('http://127.0.0.1:8000/api', { maxBytes: 1000 })).rejects.toThrow(/non publique/);
+    await expect(safeFetch('http://169.254.169.254/latest/meta-data', { maxBytes: 1000 })).rejects.toThrow(/non publique/);
+    await expect(safeFetch('file:///etc/passwd', { maxBytes: 1000 })).rejects.toThrow(/Protocole/);
+    await expect(safeFetch('http://localhost:8000/', { maxBytes: 1000 })).rejects.toThrow(/non publique/);
+  });
+});

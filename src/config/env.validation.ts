@@ -20,6 +20,9 @@ export interface EnvVars {
   PLATFORM_ADMIN_EMAIL: string | null;
   /** Mot de passe en clair ou empreinte bcrypt ($2…) */
   PLATFORM_ADMIN_PASSWORD: string | null;
+  /** Recherche des photos d'appareils par l'IA (Google Gemini) : facultatif, sans clé l'outil est désactivé */
+  GEMINI_API_KEY: string | null;
+  GEMINI_MODEL: string;
 }
 
 const MIN_SECRET_LENGTH = 32;
@@ -58,6 +61,11 @@ export function validateEnv(raw: Record<string, unknown>): EnvVars {
     errors.push('PLATFORM_ADMIN_PASSWORD doit faire au moins 12 caractères en production (ou être une empreinte bcrypt).');
   }
 
+  const geminiKey = get('GEMINI_API_KEY');
+  if (geminiKey && geminiKey.length < 20) errors.push('GEMINI_API_KEY semble incomplète (Google AI Studio > Get API key).');
+  const geminiModel = get('GEMINI_MODEL') || 'gemini-2.5-flash';
+  if (!/^[a-z0-9.-]{3,60}$/.test(geminiModel)) errors.push('GEMINI_MODEL invalide (ex. : gemini-2.5-flash).');
+
   const port = Number(get('PORT') || 8000);
   if (!Number.isInteger(port) || port <= 0) errors.push('PORT doit être un nombre entier positif.');
 
@@ -84,5 +92,7 @@ export function validateEnv(raw: Record<string, unknown>): EnvVars {
     UPLOADTHING_TOKEN: uploadthingToken || null,
     PLATFORM_ADMIN_EMAIL: adminEmail || null,
     PLATFORM_ADMIN_PASSWORD: adminPassword || null,
+    GEMINI_API_KEY: geminiKey || null,
+    GEMINI_MODEL: geminiModel,
   };
 }

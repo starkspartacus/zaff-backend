@@ -15,6 +15,9 @@ import { GLOBAL_CONNECTION } from '../src/database/database.constants';
 import { DirectoryService } from '../src/modules/global/directory/directory.service';
 import { TenantConnectionService } from '../src/database/tenant-connection.service';
 import { DevicesService } from '../src/modules/global/devices/devices.service';
+import sharp from 'sharp';
+import { AI_CLIENT } from '../src/modules/global/ai-images/gemini.client';
+import { PAGE_FETCHER } from '../src/modules/global/ai-images/ai-images.service';
 import { FakeModel, fakeTenantConnection } from '../src/testing/fake-model';
 import { HttpExceptionFilter } from '../src/common/filters/http-exception.filter';
 import { TransformInterceptor } from '../src/common/interceptors/transform.interceptor';
@@ -35,7 +38,36 @@ const tenantService = {
   getTenantConnection: () => ({}),
   getGlobalConnection: () => ({}),
 };
-const global = { Establishment: new FakeModel(['slug']), UserDirectory: new FakeModel(), ReferenceCategory: new FakeModel(['slug']), CatalogImage: new FakeModel(['sha256']), GlobalDevice: new FakeModel(), DeviceRequest: new FakeModel() };
+const global = { Establishment: new FakeModel(['slug']), UserDirectory: new FakeModel(), ReferenceCategory: new FakeModel(['slug']), CatalogImage: new FakeModel(['sha256']), GlobalDevice: new FakeModel(), DeviceRequest: new FakeModel(), AiImageJob: new FakeModel(), AiImageCandidate: new FakeModel() };
+// ─── IA de démonstration : trois « photos » par appareil, notées comme le ferait Gemini ───
+const demoColors = ['#1f2937', '#93c5fd', '#c4b5fd'];
+const demoAi = {
+  enabled: true,
+  model: 'démo (sans clé Gemini)',
+  async generate(req: { parts: Array<{ text?: string }>; search?: boolean }) {
+    const prompt = req.parts.map((p) => p.text || '').join(' ');
+    const name = (prompt.match(/"([^"]+)"/) || [])[1] || 'appareil';
+    const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    if (req.search) {
+      return { text: JSON.stringify({ images: demoColors.map((_, i) => ({ url: `https://demo.zaff.app/${slug}-${i}.png`, page: 'https://demo.zaff.app/' + slug, color: ['Noir', 'Bleu', 'Violet'][i] })) }), sources: [] };
+    }
+    const n = req.parts.filter((p: any) => p.image).length;
+    const images = Array.from({ length: n }, (_, i) => ({
+      index: i, sameModel: i < 2, productPhoto: true, view: 'front', color: ['Noir', 'Bleu', 'Violet'][i], cleanBackground: true,
+      textOrWatermark: false, score: [95, 78, 88][i] ?? 60, reason: ['Vue de face officielle, fond blanc', 'Bonne photo, légèrement de biais', 'Ce n\'est pas le même modèle'][i] ?? 'Photo correcte',
+    }));
+    return { text: JSON.stringify({ images }), sources: [] };
+  },
+};
+const demoFetcher = async (url: string) => {
+  const i = Number((url.match(/-(\d)\.png$/) || [])[1] ?? 0);
+  const buffer = await sharp({ create: { width: 1400, height: 1000, channels: 3, background: '#ffffff' } })
+    .composite([{ input: { create: { width: 420, height: 820, channels: 3, background: demoColors[i] || '#999' } }, gravity: 'center' }])
+    .png()
+    .toBuffer();
+  return { buffer, contentType: 'image/png', url };
+};
+
 const fakeConnection: any = { model: () => new FakeModel(), models: {}, useDb: () => fakeConnection, close: async () => undefined };
 
 (async () => {
@@ -45,6 +77,8 @@ const fakeConnection: any = { model: () => new FakeModel(), models: {}, useDb: (
     .overrideProvider(TenantConnectionService)
     .useValue(tenantService);
   for (const [name, model] of Object.entries(global)) builder.overrideProvider(getModelToken(name, GLOBAL_CONNECTION)).useValue(model);
+  // Sans GEMINI_API_KEY : IA et Internet simulés (photos générées), pour essayer « Photos par l'IA » hors ligne
+  if (!process.env.GEMINI_API_KEY) builder.overrideProvider(AI_CLIENT).useValue(demoAi).overrideProvider(PAGE_FETCHER).useValue(demoFetcher);
   const moduleRef = await builder.compile();
 
   const app = moduleRef.createNestApplication({ logger: ['error', 'warn'] });

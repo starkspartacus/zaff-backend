@@ -30,6 +30,8 @@ describe('validateEnv', () => {
       UPLOADTHING_TOKEN: null,
       PLATFORM_ADMIN_EMAIL: null,
       PLATFORM_ADMIN_PASSWORD: null,
+      GEMINI_API_KEY: null,
+      GEMINI_MODEL: 'gemini-2.5-flash',
     });
   });
 

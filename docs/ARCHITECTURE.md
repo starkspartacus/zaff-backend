@@ -149,6 +149,27 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 - **Contrat** : chaque ligne porte `specs` (fiche technique de l'appareil, 8 lignes max, `DevicesService.specsFor`).
 - Tri `GET /platform/devices?sort=popular` (les plus utilisés d'abord) ; `stats` : `usedDevices`, `usedWithPhotos`, `requests`.
 
+## Photos par l'IA (`ai-images/`, `/platform/ai-images`, administrateur)
+- **Google Gemini** par l'API REST (`gemini.client.ts`, jeton `AI_CLIENT`) : `GEMINI_API_KEY` (facultatif, sans elle l'outil
+  est désactivé) et `GEMINI_MODEL` (défaut `gemini-2.5-flash`), dans l'environnement uniquement ; clé envoyée en en-tête.
+- **Lots** `ai_image_jobs` (`POST /jobs` : `deviceIds`, ou `selection: missing-popular` + `limit` ≤ 200 = appareils sans photo
+  les plus utilisés, sans ceux déjà en attente ; `auto`, `minScore`, `perDevice`). Traités en arrière-plan, un lot à la fois,
+  2 appareils en parallèle, repris après un redémarrage (`doneIds`), arrêt possible (`/jobs/:id/cancel`) ; clé refusée /
+  quota (`AiUnavailable`) → lot `failed` avec la raison ; 429 / 503 → nouvelles tentatives espacées.
+- **Par appareil** (`findForDevice`) : 1) recherche Google par Gemini (photos et pages officielles, fabricant d'abord) ;
+  2) photos repérées dans ces pages (`image-sources.ts` : og:image, JSON-LD, plus grande image du srcset, sans logos / SVG) ;
+  3) téléchargement **`safeFetch`** (http(s) seulement, IP privées / locales / métadonnées cloud refusées à la connexion
+  même — pas de SSRF ni de contournement DNS —, 3 redirections, 8 Mo, 12 s) ; 4) **mise au format** `normalizeProductImage`
+  (`sharp`) : fond blanc, bords retirés, carré WebP ≤ 1000 px (jamais agrandi, ≤ 550 Ko) + vignette 320 px, refus des SVG /
+  images < 300 px ; 5) **vérification par Gemini** (réponse JSON à schéma) : bon modèle (pas une autre génération), vraie photo
+  produit, vue, coloris, fond, texte / filigrane, note /100, raison en français ; note pénalisée (texte −25, fond −15, vue
+  de profil −15), gardée si ≥ 55 ; la meilleure par coloris (coloris ramené aux coloris officiels).
+- **Propositions** `ai_image_candidates` (image au format stockée en base, supprimées après 14 jours) : `GET /candidates`,
+  aperçu protégé `GET /candidates/:id/preview?size=thumb|full`, `POST /candidates/:id/publish` (→ `DevicesService.addPhoto` :
+  UploadThing, anti-doublon, transmission aux boutiques), `/reject`, `POST /candidates/publish` (choisies, ou lot ≥ note).
+  En mode `auto`, les photos ≥ `minScore` sont publiées directement. Source (page) gardée pour la traçabilité.
+- `dev:memory` sans clé : IA et Internet simulés (photos générées) pour essayer l'écran.
+
 ## Images produits partagées (`/global/images`) — UploadThing, sans fichier orphelin
 - **Stockage** (`media-storage.ts`, jeton `MEDIA_STORAGE`) : **UploadThing** si `UPLOADTHING_TOKEN` est défini (envoi
   côté serveur avec `UTApi`, après nos vérifications ; `customId` = `zaff-<sha256>`), sinon dans MongoDB (développement,
