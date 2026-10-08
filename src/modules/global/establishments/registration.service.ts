@@ -1,4 +1,5 @@
-import { BadRequestException, ConflictException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, Logger, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import * as bcrypt from 'bcrypt';
@@ -23,7 +24,14 @@ export class RegistrationService {
     private readonly establishmentModel: Model<EstablishmentDocument>,
     private readonly tenantConnectionService: TenantConnectionService,
     private readonly directoryService: DirectoryService,
+    @Optional() private readonly config?: ConfigService,
   ) {}
+
+  /** L'e-mail de l'administrateur ZAFF est réservé : aucune boutique ne peut l'utiliser */
+  private reserved(email: string) {
+    const admin = this.config?.get<string | null>('platformAdmin.email');
+    return !!admin && email === admin;
+  }
 
   private slugify(text: string) {
     return text
@@ -56,7 +64,7 @@ export class RegistrationService {
     if (dto.email) {
       const email = dto.email.trim().toLowerCase();
       const valid = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email);
-      result.email = { valid, taken: valid && (await this.directoryService.findByIdentifier(email)).length > 0 };
+      result.email = { valid, taken: valid && (this.reserved(email) || (await this.directoryService.findByIdentifier(email)).length > 0) };
     }
     return result;
   }

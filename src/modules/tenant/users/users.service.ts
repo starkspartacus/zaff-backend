@@ -1,4 +1,5 @@
-import { Injectable, BadRequestException, ConflictException, NotFoundException } from '@nestjs/common';
+import { Injectable, BadRequestException, ConflictException, NotFoundException, Optional } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import * as bcrypt from 'bcrypt';
 import { TenantConnectionService } from '../../../database/tenant-connection.service';
 import { TenantUser, TenantUserSchema } from '../common/schemas/tenant-user.schema';
@@ -12,6 +13,7 @@ export class UsersService {
   constructor(
     private readonly tenantConnectionService: TenantConnectionService,
     private readonly directoryService: DirectoryService,
+    @Optional() private readonly config?: ConfigService,
   ) {}
 
   private getModel(databaseName: string) {
@@ -33,7 +35,9 @@ export class UsersService {
   private async assertAvailable(identifier: string | null | undefined, exceptUserId?: string) {
     if (!identifier) return;
     const owners = await this.directoryService.findByIdentifier(identifier);
-    if (owners.some((o) => String(o.tenantUserId) !== exceptUserId)) {
+    // L'e-mail de l'administrateur ZAFF est réservé
+    const reserved = identifier === this.config?.get<string | null>('platformAdmin.email');
+    if (reserved || owners.some((o) => String(o.tenantUserId) !== exceptUserId)) {
       const isEmail = identifier.includes('@');
       throw new ConflictException({
         message: isEmail ? 'Cette adresse e-mail est déjà utilisée par un compte ZAFF.' : 'Ce numéro de téléphone est déjà utilisé par un compte ZAFF.',

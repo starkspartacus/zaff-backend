@@ -27,6 +27,12 @@ export class PlatformAuthService {
     return !!this.config.get<string | null>('platformAdmin.email') && !!this.config.get<string | null>('platformAdmin.password');
   }
 
+  /** L'adresse est celle de l'administrateur (réservée : aucune boutique ne peut l'utiliser) */
+  isAdminEmail(email?: string | null) {
+    const expected = this.config.get<string | null>('platformAdmin.email');
+    return !!expected && !!email && this.same(email.trim().toLowerCase(), expected);
+  }
+
   private same(a: string, b: string) {
     // Comparaison à temps constant (empreintes de même longueur)
     const ha = createHash('sha256').update(a).digest();

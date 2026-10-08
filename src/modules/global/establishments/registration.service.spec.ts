@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import { PlatformAuthService } from '../platform/platform-auth.service';
 import * as bcrypt from 'bcrypt';
 import { FakeModel, fakeTenantConnection } from '../../../testing/fake-model';
 import { DirectoryService } from '../directory/directory.service';
@@ -59,6 +60,24 @@ describe('Inscription et connexion', () => {
     await expect(registration.register({ ...base, city: 'Gotham' })).rejects.toThrow("Choisissez votre ville dans la liste (Côte d'Ivoire).");
     // Bouaké : pas de commune à choisir
     await expect(registration.register({ ...base, city: 'bouaké', commune: undefined })).resolves.toMatchObject({ city: 'Bouaké', commune: null });
+  });
+
+  it('e-mail de l\'administrateur ZAFF : réservé, et la connexion boutique ouvre l\'espace administrateur', async () => {
+    const values: Record<string, string> = { 'platformAdmin.email': 'admin@zaff.app', 'platformAdmin.password': 'MotDePasse2026' };
+    const config: any = { get: (k: string) => values[k] ?? null };
+    const jwt = new JwtService({ secret: 'test-secret-assez-long-pour-les-jetons' });
+    const reg = new RegistrationService(establishments as any, { getModel: () => null } as any, new DirectoryService(directoryModel as any), config);
+    expect((await reg.check({ email: 'Admin@zaff.app' } as any)).email).toMatchObject({ taken: true });
+    // Même si une boutique a déjà ce compte avec le même mot de passe (créé avant la réservation)
+    await registration.register({ ...base, ownerEmail: 'admin@zaff.app', password: 'MotDePasse2026' });
+    const platformAuth = new PlatformAuthService(config, jwt);
+    const a = new AuthService(new EstablishmentsService(establishments as any), new DirectoryService(directoryModel as any), (auth as any).tenantConnectionService, jwt, platformAuth);
+    const res: any = await a.login({ identifier: 'ADMIN@zaff.app', password: 'MotDePasse2026' } as any, '9.9.9.9');
+    expect(res.platform).toBe(true);
+    expect(jwt.verify(res.accessToken)).toMatchObject({ platform: true, role: 'superadmin' });
+    await expect(a.login({ identifier: 'admin@zaff.app', password: 'faux' } as any, '9.9.9.9')).rejects.toThrow(/administrateur incorrect/);
+    // Le propriétaire garde l'accès à sa boutique par son numéro de téléphone
+    await expect(a.login({ identifier: '0707070707', countryCode: 'CI', password: 'MotDePasse2026' } as any)).resolves.toMatchObject({ user: { role: 'admin' } });
   });
 
   it('pays sans liste de villes : ville saisie librement', async () => {

@@ -1,4 +1,4 @@
-import { ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { ConflictException, ForbiddenException, Injectable, Logger, NotFoundException, Optional, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { EstablishmentsService } from '../../global/establishments/establishments.service';
@@ -8,6 +8,7 @@ import { TenantUser, TenantUserSchema } from '../common/schemas/tenant-user.sche
 import { LoginDto } from './dto/login.dto';
 import { normalizeRole } from '../../../common/enums/role.enum';
 import { normalizeIdentifier } from '../../../common/utils/identifier';
+import { PlatformAuthService } from '../../global/platform/platform-auth.service';
 
 @Injectable()
 export class AuthService {
@@ -18,6 +19,7 @@ export class AuthService {
     private readonly directoryService: DirectoryService,
     private readonly tenantConnectionService: TenantConnectionService,
     private readonly jwtService: JwtService,
+    @Optional() private readonly platform?: PlatformAuthService,
   ) {}
 
   private userModel(databaseName: string) {
@@ -46,9 +48,15 @@ export class AuthService {
     return found;
   }
 
-  async login(dto: LoginDto) {
+  async login(dto: LoginDto, ip?: string) {
     // Téléphone : le pays choisi donne l'indicatif (07 07… + CI → +2250707…) ; e-mail : en minuscules
     const identifier = normalizeIdentifier(dto.identifier, dto.countryCode);
+
+    // E-mail de l'administrateur ZAFF (environnement) : c'est l'espace administrateur qui s'ouvre, jamais une boutique.
+    // Mêmes protections que /platform/auth/login (blocage après 5 échecs).
+    if (this.platform?.enabled && this.platform.isAdminEmail(identifier)) {
+      return { platform: true, ...(await this.platform.login(identifier, dto.password, ip)) };
+    }
 
     let candidates: any[];
     if (dto.tenantSlug) {

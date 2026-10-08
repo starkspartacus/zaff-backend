@@ -110,6 +110,11 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   production, ou empreinte bcrypt `$2…`). Sans eux, la connexion admin est désactivée.
 - `POST /platform/auth/login { email, password }` (`PlatformAuthService`) : comparaison en temps constant, 5 échecs → IP
   bloquée 15 min ; jeton `platform: true`, rôle `superadmin`, valable 12 h. `GET /platform/auth/me`.
+- **E-mail admin réservé** : aucune boutique ni collaborateur ne peut l'utiliser (`check` / inscription → `EMAIL_TAKEN`,
+  collaborateurs → 409). `POST /auth/login` (connexion des boutiques) avec cet e-mail ouvre l'**espace administrateur**
+  (`{ platform: true, accessToken, admin }`, mêmes protections que `/platform/auth/login`), jamais une boutique — même si un
+  ancien compte boutique utilise encore cet e-mail (son propriétaire se connecte alors par téléphone).
+  `PlatformAuthService` est fourni par `AuthModule`.
 - `PlatformAdminGuard` : jeton plateforme ET e-mail = celui de l'environnement. `TenantGuard` **refuse** un jeton plateforme :
   l'administrateur ne lit jamais les données d'une boutique ; un jeton de boutique n'accède jamais à `/platform/*`.
 
