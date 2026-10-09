@@ -142,10 +142,12 @@ class GeminiModel implements Provider {
         signal: AbortSignal.timeout(120_000),
       });
       const json: any = await res.json().catch(() => ({}));
-      if (res.status === 503 && attempt < 2) {
-        await sleep(3000 * (attempt + 1)); // surcharge passagère
+      if (res.status === 503 && attempt < 1) {
+        await sleep(3000); // surcharge passagère : un seul nouvel essai
         continue;
       }
+      // Modèle surchargé (« high demand ») : il se repose 2 min, l'IA suivante prend le relais (autre Gemini, Groq…)
+      if (res.status === 503) throw new RateLimited(120_000, false, String(json?.error?.message || 'Modèle surchargé').slice(0, 220));
       if (res.status === 429) {
         const q = parseGoogleQuota(json);
         throw new RateLimited(q.retryMs, q.daily, q.detail);

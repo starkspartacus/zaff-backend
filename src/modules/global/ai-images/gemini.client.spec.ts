@@ -127,4 +127,11 @@ describe('Client Gemini', () => {
     expect((await c.generate({ parts: [{ text: 'vérifie' }] })).text).toBe('vision ok'); // quota séparé
     expect(c.describe()[0].searchBlockedUntil).toBeInstanceOf(Date);
   });
+
+  it('modèle surchargé (503) : on passe à l\'IA suivante au lieu d\'échouer', async () => {
+    global.fetch = (async (url: string) =>
+      url.includes('gemini-a:') ? reply(503, { error: { message: 'This model is currently experiencing high demand.' } }) : ok('relais')) as any;
+    const c = new GeminiClient(config('gemini-a', { 'ai.geminiFallbackModels': ['gemini-b'] }));
+    expect((await c.generate({ parts: [{ text: 'x' }] })).text).toBe('relais');
+  });
 });
