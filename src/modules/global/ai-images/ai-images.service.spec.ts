@@ -5,7 +5,7 @@ import { DevicesService } from '../devices/devices.service';
 import { AiImagesService, Fetcher } from './ai-images.service';
 import { AiClient, AiQuotaExceeded, AiRequest, AiUnavailable, parseJsonLoose } from './gemini.client';
 import { normalizeProductImage, ImageRejected } from './image-normalize';
-import { commonsSearchUrl, extractImageUrls, modelTokens, parseCommons } from './image-sources';
+import { brandTokens, commonsSearchUrl, extractImageUrls, labelMatches, modelTokens, parseCommons, parseOpenverse } from './image-sources';
 import { isPublicAddress, safeFetch } from './safe-fetch';
 
 const photo = (color: string, w = 1600, h = 900) =>
@@ -106,6 +106,8 @@ describe('Photos des appareils trouvées par l\'IA', () => {
     devices = new DevicesService(new FakeModel() as any, new ImagesService(imageModel as any));
     await devices.onModuleInit();
     service = new AiImagesService(jobs as any, candidates as any, devices, ai, fetcher);
+    service.freeSpacingMs = 0;
+    service.freeRetryMs = 0;
   });
 
   const a55 = async () => {
@@ -279,6 +281,63 @@ describe('Photos des appareils trouvées par l\'IA', () => {
     expect(parseCommons(json, modelTokens('Samsung', 'Galaxy A55 5G')).map((x) => x.url)).toEqual(['u1']);
   });
 
+  it('aucune photo de catalogue : la meilleure du bon modèle est proposée « à défaut », jamais publiée seule', async () => {
+    const dev = await a55();
+    ai.verdicts = [
+      { index: 0, modelMatch: 'exact', productPhoto: true, view: 'front', color: 'Noir', cleanBackground: false, textOrWatermark: false, score: 60, reason: 'Photo en magasin' },
+      { index: 1, modelMatch: 'exact', productPhoto: true, view: 'front', color: 'Noir', cleanBackground: false, textOrWatermark: false, score: 50, reason: 'Floue' },
+      { index: 2, modelMatch: 'different', productPhoto: true, view: 'front', color: null, cleanBackground: true, textOrWatermark: false, score: 95, reason: 'Galaxy A35' },
+    ];
+    await service.createJob({ deviceIds: [dev.id], auto: true, minScore: 10 });
+    await service.kick();
+    expect((await devices.get(dev.id)).photos).toHaveLength(0);
+    const list = await service.listCandidates({});
+    expect(list.map((c) => [c.score, c.verdict.fallback])).toEqual([[45, true]]);
+    const [j] = await service.listJobs();
+    expect(j.log[0].detail).toMatch(/1 retenue\(s\) à défaut \(photo de qualité moyenne, à valider\) sur 3.*Écartées : /);
+  });
+
+  it('nom du modèle : un chiffre seul compte (« Aspire 5 » ≠ Aspire 5336 / TravelMate), la marque seule ne suffit pas', () => {
+    const t = modelTokens('Acer', 'Aspire 5');
+    const acer = brandTokens('Acer');
+    expect(t).toEqual(['acer', 'aspire', '5']);
+    expect(['Acer Aspire 5', 'Acer Aspire 5 (2023)', 'Acer Aspire 5336', 'Acer Aspire 5710ZG', 'Acer TravelMate 5'].map((l) => labelMatches(l, t, acer))).toEqual([true, true, false, false, false]);
+    const nitro = modelTokens('Acer', 'Nitro V 15');
+    expect(labelMatches('Acer Nitro V 15 ANV15-51', nitro, acer)).toBe(true);
+    expect(labelMatches('Acer Nitro 5', nitro, acer)).toBe(false);
+  });
+
+  it('Openverse : licences commerciales seulement, titre du modèle exigé, crédit gardé', () => {
+    const tokens = modelTokens('Tecno', 'Spark 20');
+    const json = { results: [
+      { url: 'https://upload.wikimedia.org/a.jpg', title: 'Tecno Spark 20', width: 2448, height: 3264, license: 'by-sa', license_version: '4.0', creator: 'Ama', source: 'wikimedia', foreign_landing_url: 'https://commons.wikimedia.org/wiki/File:a.jpg' },
+      { url: 'https://upload.wikimedia.org/b.jpg', title: 'Tecno Spark 20 Pro+', width: 300, height: 400, license: 'by' },
+      { url: 'https://live.staticflickr.com/c.jpg', title: 'KKV at SM J Mall', width: 4160, height: 3120, license: 'by' },
+      { url: 'https://upload.wikimedia.org/d.svg', title: 'Tecno Spark 20 vector', width: 900, height: 1800, license: 'by' },
+    ] };
+    expect(parseOpenverse(json, tokens, brandTokens('Tecno'))).toEqual([
+      { url: 'https://upload.wikimedia.org/a.jpg', page: 'https://commons.wikimedia.org/wiki/File:a.jpg', credit: 'Photo : Ama, CC BY-SA 4.0, Wikimedia' },
+    ]);
+  });
+
+  it('Wikimedia surchargé (429) : un nouvel essai, puis la raison est écrite au journal', async () => {
+    const dev = await a55();
+    ai.searchQuota = new Date(Date.now() + 3600_000);
+    const asked: string[] = [];
+    const busy: Fetcher = async (url) => {
+      asked.push(url);
+      throw new Error('HTTP 429');
+    };
+    const s2 = new AiImagesService(jobs as any, candidates as any, devices, ai, busy);
+    s2.freeSpacingMs = 0;
+    s2.freeRetryMs = 0;
+    await s2.createJob({ deviceIds: [dev.id] });
+    await s2.kick();
+    expect(asked.filter((u) => u.includes('wikidata.org'))).toHaveLength(2); // essai + nouvel essai
+    const [j] = await s2.listJobs();
+    expect(j.log[0].detail).toMatch(/Wikidata : trop de demandes, réessayez plus tard ; Wikimedia Commons : trop de demandes.*Openverse : trop de demandes/);
+  });
+
   it('fiches complétées par l\'IA : seulement ce qui est vide, codes couleur ajoutés, rien d\'inventé', async () => {
     const a = (await devices.list({ search: 'galaxy a55' })).items[0];
     const b = await devices.update((await devices.list({ search: 'iphone 15 pro max' })).items[0].id, { colors: ['Titane noir'], specs: [{ label: 'Écran', value: 'Saisie admin' }] });
@@ -336,7 +395,7 @@ describe('Photos des appareils trouvées par l\'IA', () => {
     // Photo de référence Wikidata (CC0) et photo trouvée sur Commons, chacune avec son crédit
     expect(list.map((c) => c.verdict.credit).sort()).toEqual(['CC0, Wikimedia Commons', 'Photo : Jean Photo, CC BY-SA 4.0, Wikimedia Commons']);
     const [j] = await service.listJobs();
-    expect(j.log[0].detail).toMatch(/Wikidata \/ Wikimedia : 3 photo.*2 utilisable/);
+    expect(j.log[0].detail).toMatch(/Sources libres \(Wikidata, Wikimedia, Openverse\) : 3 photo.*2 utilisable/);
   });
 
   it('fiches : réponses rattachées par numéro quand l\'IA recopie mal les identifiants, sinon nouvel essai un par un', async () => {

@@ -9,13 +9,16 @@ import { AI_CLIENT, AiClient, AiPart, AiQuotaExceeded, AiUnavailable, parseJsonL
 import { AiImageCandidate, AiImageCandidateDocument, AiImageJob, AiImageJobDocument } from './ai-images.schemas';
 import { ImageRejected, NormalizedImage, normalizeProductImage } from './image-normalize';
 import {
+  brandTokens,
   commonsFilesUrl,
   commonsSearchUrl,
   domainOf,
   extractImageUrls,
   modelTokens,
+  openverseSearchUrl,
   parseCommons,
   parseCommonsFiles,
+  parseOpenverse,
   parseWikidataImages,
   parseWikidataSearch,
   wikidataEntitiesUrl,
@@ -66,6 +69,8 @@ interface Verdict {
 const MAX_DOWNLOADS = 14;
 const MAX_REVIEWED = 10;
 const MIN_KEEP_SCORE = 55;
+/** Note minimale d'une photo proposée « à défaut » quand aucune n'atteint MIN_KEEP_SCORE */
+const MIN_FALLBACK_SCORE = 30;
 /** Pénalité selon la certitude sur le modèle : une autre génération de la même gamme reste proposée, à valider */
 const MATCH_PENALTY: Record<ModelMatch, number | null> = { exact: 0, 'same-line': 10, unsure: 20, different: null };
 const MATCH_LABEL: Record<ModelMatch, string> = { exact: 'modèle exact', 'same-line': 'même gamme, génération à confirmer', unsure: 'modèle probable, à confirmer', different: 'autre modèle' };
@@ -483,47 +488,89 @@ export class AiImagesService implements OnApplicationBootstrap {
     } catch (e) {
       if (!(e instanceof AiQuotaExceeded)) throw e;
       // Recherche Google épuisée : photos libres de Wikimedia Commons (gratuit, sans clé, auteur et licence gardés)
-      return { images: await this.commons(device), pages: [] as string[], via: 'commons' as const };
+      const free = await this.commons(device);
+      return { images: free.images, notes: free.notes, pages: [] as string[], via: 'commons' as const };
     }
     const json = parseJsonLoose<{ images?: { url?: string; page?: string; color?: string | null }[]; pages?: string[] }>(res.text) || {};
     const images: Array<{ url?: string; page?: string; color?: string | null; credit?: string | null }> = (json.images || []).filter((i) => typeof i?.url === 'string').slice(0, 10);
     const pages = [...new Set([...(json.pages || []), ...images.map((i) => i.page || ''), ...res.sources.map((s) => s.uri)].filter((p) => typeof p === 'string' && /^https?:\/\//.test(p)))].slice(0, 6);
-    return { images, pages, via: 'ia' as const };
+    return { images, pages, notes: [] as string[], via: 'ia' as const };
   }
 
+  /** Wikimedia et Openverse limitent les robots : une requête à la fois, espacées d'au moins 1,2 s */
+  private freeGate: Promise<unknown> = Promise.resolve();
+  freeSpacingMs = 1200;
+
   private async getJson(url: string) {
-    const res = await this.fetcher(url, { maxBytes: 2_000_000, timeoutMs: 10000, accept: 'application/json' });
-    return JSON.parse(res.buffer.toString('utf8'));
+    const run = async () => {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const res = await this.fetcher(url, { maxBytes: 2_000_000, timeoutMs: 10000, accept: 'application/json' });
+          return JSON.parse(res.buffer.toString('utf8'));
+        } catch (e) {
+          // Trop de demandes : on patiente puis un seul nouvel essai
+          if (attempt === 0 && /HTTP 429/.test((e as Error).message)) {
+            await new Promise((r) => setTimeout(r, this.freeRetryMs));
+            continue;
+          }
+          throw e;
+        }
+      }
+    };
+    const next = this.freeGate.then(run, run);
+    this.freeGate = next.then(
+      () => new Promise((r) => setTimeout(r, this.freeSpacingMs)),
+      () => new Promise((r) => setTimeout(r, this.freeSpacingMs)),
+    );
+    return next;
   }
+
+  /** Délai avant le nouvel essai après un 429 (raccourci dans les tests) */
+  freeRetryMs = 8000;
 
   /**
    * Sources libres et gratuites (sans IA ni clé) : 1) photo de référence de la fiche Wikidata du modèle (choisie par
-   * la communauté, très fiable) ; 2) recherche Wikimedia Commons sur le titre. Auteur et licence gardés.
+   * la communauté, très fiable) ; 2) recherche Wikimedia Commons sur le titre ; 3) Openverse (Flickr, Commons…, licences
+   * permettant l'usage commercial). Auteur et licence gardés ; une source en panne est signalée au journal.
    */
   private async commons(device: Device) {
     const tokens = modelTokens(device.brand, device.model);
-    const out: Array<{ url: string; page?: string; credit: string | null }> = [];
+    const brand = brandTokens(device.brand);
+    const images: Array<{ url: string; page?: string; credit: string | null }> = [];
+    const notes: string[] = [];
+    const add = (list: Array<{ url: string; page: string | null; credit: string | null }>) => {
+      for (const x of list) if (!images.some((o) => o.url === x.url)) images.push({ url: x.url, page: x.page || undefined, credit: x.credit });
+    };
+    const failed = (source: string, e: unknown) => {
+      const msg = (e as Error).message || 'erreur';
+      notes.push(`${source} : ${/HTTP 429/.test(msg) ? 'trop de demandes, réessayez plus tard' : msg.slice(0, 60)}`);
+    };
     try {
-      const ids = parseWikidataSearch(await this.getJson(wikidataSearchUrl(device.brand, device.model)), tokens);
+      const ids = parseWikidataSearch(await this.getJson(wikidataSearchUrl(device.brand, device.model)), tokens, brand);
       const files = ids.length ? parseWikidataImages(await this.getJson(wikidataEntitiesUrl(ids))) : [];
-      if (files.length) out.push(...parseCommonsFiles(await this.getJson(commonsFilesUrl(files))).map((x) => ({ url: x.url, page: x.page || undefined, credit: x.credit })));
-    } catch {
-      /* Wikidata indisponible : on passe à la recherche Commons */
+      if (files.length) add(parseCommonsFiles(await this.getJson(commonsFilesUrl(files))));
+    } catch (e) {
+      failed('Wikidata', e);
     }
     try {
-      for (const x of parseCommons(await this.getJson(commonsSearchUrl(device.brand, device.model)), tokens)) {
-        if (!out.some((o) => o.url === x.url)) out.push({ url: x.url, page: x.page || undefined, credit: x.credit });
-      }
-    } catch {
-      /* Commons indisponible */
+      add(parseCommons(await this.getJson(commonsSearchUrl(device.brand, device.model)), tokens, 8, true, brand));
+    } catch (e) {
+      failed('Wikimedia Commons', e);
     }
-    return out.slice(0, 10);
+    if (images.length < 6) {
+      try {
+        add(parseOpenverse(await this.getJson(openverseSearchUrl(device.brand, device.model)), tokens, brand));
+      } catch (e) {
+        failed('Openverse', e);
+      }
+    }
+    return { images: images.slice(0, 10), notes };
   }
 
   private readonly credits = new Map<string, string>();
 
   private async collectUrls(device: Device, forceCommons = false) {
-    const { images, pages, via } = forceCommons ? { images: await this.commons(device), pages: [] as string[], via: 'commons' as const } : await this.searchSources(device);
+    const { images, pages, via, notes } = forceCommons ? { ...(await this.commons(device)), pages: [] as string[], via: 'commons' as const } : await this.searchSources(device);
     const urls = new Map<string, string | null>(); // photo → page d'origine
     for (const i of images) {
       if (!/^https?:\/\//.test(i.url!)) continue;
@@ -540,7 +587,7 @@ export class AiImagesService implements OnApplicationBootstrap {
         /* page inaccessible : on passe */
       }
     });
-    return { list: [...urls.entries()].slice(0, MAX_DOWNLOADS), via, pages: pages.length };
+    return { list: [...urls.entries()].slice(0, MAX_DOWNLOADS), via, pages: pages.length, notes };
   }
 
   private async downloadAll(list: [string, string | null][]) {
@@ -612,7 +659,8 @@ export class AiImagesService implements OnApplicationBootstrap {
     const notes: string[] = [];
     const describe = (f: typeof found, d: typeof dl) => {
       const refusals = [...d.refused.entries()].map(([r, n]) => `${r} ×${n}`).join(', ');
-      return `${f.via === 'commons' ? 'Wikidata / Wikimedia' : 'Recherche IA'} : ${f.list.length} photo(s) repérée(s)${f.pages ? ` dans ${f.pages} page(s)` : ''}, ${d.imgs.length} utilisable(s)${refusals ? ` (refus : ${refusals})` : ''}`;
+      const issues = f.notes.length ? ` [${f.notes.join(' ; ')}]` : '';
+      return `${f.via === 'commons' ? 'Sources libres (Wikidata, Wikimedia, Openverse)' : 'Recherche IA'} : ${f.list.length} photo(s) repérée(s)${f.pages ? ` dans ${f.pages} page(s)` : ''}, ${d.imgs.length} utilisable(s)${refusals ? ` (refus : ${refusals})` : ''}${issues}`;
     };
     notes.push(describe(found, dl));
     // Sites des fabricants inaccessibles : on tente les photos libres de Wikimedia
@@ -636,13 +684,18 @@ export class AiImagesService implements OnApplicationBootstrap {
         score -= MATCH_PENALTY[match] ?? 100;
         return { v, match, x: imgs[v.index], score: Math.max(0, score), color: this.matchColor(device, v.color) };
       })
-      .filter((s) => MATCH_PENALTY[s.match] !== null && s.v.productPhoto && s.score >= MIN_KEEP_SCORE)
+      .filter((s) => MATCH_PENALTY[s.match] !== null && s.v.productPhoto)
       .sort((a, b) => b.score - a.score);
+    const good = scored.filter((s) => s.score >= MIN_KEEP_SCORE);
+    // Aucune photo de catalogue (souvent : photos libres prises en magasin) : la meilleure du bon modèle est proposée
+    // « à défaut », à valider par l'admin, jamais publiée automatiquement
+    const fallback = !good.length && scored[0] && scored[0].score >= MIN_FALLBACK_SCORE ? [scored[0]] : [];
+    const kept = good.length ? good : fallback;
 
     // La meilleure photo de chaque coloris (et la meilleure tous coloris confondus)
     const chosen: typeof scored = [];
     const colorsTaken = new Set<string>();
-    for (const s of scored) {
+    for (const s of kept) {
       const key = s.color ? imageKey(s.color) : '';
       if (colorsTaken.has(key) && chosen.length) continue;
       colorsTaken.add(key);
@@ -659,7 +712,7 @@ export class AiImagesService implements OnApplicationBootstrap {
         deviceId: device.id,
         color: s.color,
         score: s.score,
-        verdict: { modelMatch: s.match, view: s.v.view, cleanBackground: s.v.cleanBackground, textOrWatermark: s.v.textOrWatermark, aiScore: s.v.score, reason: s.v.reason, aiColor: s.v.color || null, credit: s.x.credit },
+        verdict: { modelMatch: s.match, fallback: fallback.includes(s), view: s.v.view, cleanBackground: s.v.cleanBackground, textOrWatermark: s.v.textOrWatermark, aiScore: s.v.score, reason: s.v.reason, aiColor: s.v.color || null, credit: s.x.credit },
         sourceUrl: s.x.url,
         pageUrl: s.x.page,
         sha256: s.x.sha256,
@@ -672,7 +725,7 @@ export class AiImagesService implements OnApplicationBootstrap {
         expiresAt: new Date(Date.now() + 14 * 24 * 3600 * 1000),
       });
       // Publication automatique : seulement le modèle exact (une autre génération attend la validation de l'admin)
-      if (job.auto && s.match === 'exact' && s.score >= job.minScore) {
+      if (job.auto && s.match === 'exact' && !fallback.includes(s) && s.score >= job.minScore) {
         const r = await this.publish(String(cand._id)).catch(() => null);
         if (r?.status === 'published') published++;
       }
@@ -684,10 +737,10 @@ export class AiImagesService implements OnApplicationBootstrap {
       if (!v.productPhoto) counts.set('pas une photo produit', (counts.get('pas une photo produit') || 0) + 1);
     }
     const tally = [...counts.entries()].map(([k, n]) => `${n} ${k}`).join(', ');
-    notes.push(`Vérification : ${chosen.length} retenue(s) sur ${imgs.length}${verdicts.length < imgs.length ? ` (${imgs.length - verdicts.length} sans avis)` : ''}${tally ? `, ${tally}` : ''}`);
+    notes.push(`Vérification : ${chosen.length} retenue(s)${fallback.length ? ' à défaut (photo de qualité moyenne, à valider)' : ''} sur ${imgs.length}${verdicts.length < imgs.length ? ` (${imgs.length - verdicts.length} sans avis)` : ''}${tally ? `, ${tally}` : ''}`);
     // Raisons des photos écartées : l'admin comprend pourquoi rien n'a été retenu
-    if (!chosen.length) {
-      const why = [...new Set(verdicts.filter((v) => !scored.some((s) => s.v === v)).map((v) => String(v.reason || '').trim()).filter(Boolean))].slice(0, 2);
+    if (!good.length) {
+      const why = [...new Set(verdicts.filter((v) => !good.some((s) => s.v === v)).map((v) => String(v.reason || '').trim()).filter(Boolean))].slice(0, 2);
       if (why.length) notes.push(`Écartées : ${why.map((r) => (r.length > 110 ? `${r.slice(0, 107)}…` : r)).join(' ; ')}`);
     }
     return { kept: chosen.length, published, detail: notes.join(' · ') };

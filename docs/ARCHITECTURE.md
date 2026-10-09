@@ -170,7 +170,10 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   heure et par modèle. Réponse lente / réseau coupé → ce fournisseur se repose 1 min, on passe au suivant (120 s max).
 - **Recherche Google ≠ génération** : quotas séparés (`modèle#search`) ; recherche refusée par tous les modèles → aucune
   attente, `searchBlockedUntil` (15 min min.) et passage direct aux **sources libres** : photo de référence **Wikidata**
-  (propriété P18 de la fiche du modèle, libellé vérifié) puis recherche **Wikimedia Commons** ; la vérification (sans
+  (propriété P18 de la fiche du modèle, libellé vérifié) puis recherche **Wikimedia Commons**, puis **Openverse** (Flickr,
+  Commons… licences `by, by-sa, cc0, pdm` seulement : usage commercial et retouche permis ; 200 recherches / jour sans clé) ;
+  requêtes une à une espacées de 1,2 s, 429 → un nouvel essai après 8 s, source en panne écrite au journal ; **nom du modèle** :
+  un chiffre seul compte (« Aspire 5 » ≠ Aspire 5336), la marque seule ou un nombre seul ne suffisent pas (`titleMatches`) ; la vérification (sans
   recherche) continue avec son propre quota. `maxOutputTokens: 8192` (réponses JSON jamais coupées).
 - **Complétion des fiches** (lot `kind: 'specs'`, `selection: 'incomplete'`) : 6 appareils par requête, sans recherche
   Google (peu de quota) ; coloris officiels + **codes couleur** (`colorCodes [{ name, hex }]`), capacités vendues, fiche
@@ -194,7 +197,8 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   autre génération −10 | `unsure` −20 | `different` = écartée, seulement sur indice clair), titre du fichier / adresse source
   donné comme indice ; jamais de publication automatique hors `exact` ; journal : décompte par niveau, « sans avis », raisons
   des photos écartées ; vraie photo produit, vue, coloris, fond, texte / filigrane, note /100, raison en français ; note pénalisée (texte −25, fond −15, vue
-  de profil −15), gardée si ≥ 55 ; la meilleure par coloris (coloris ramené aux coloris officiels).
+  de profil −15), gardée si ≥ 55 (aucune : la meilleure du bon modèle ≥ 30 proposée **« à défaut »**, `verdict.fallback`, jamais
+  publiée automatiquement) ; la meilleure par coloris (coloris ramené aux coloris officiels).
 - **Propositions** `ai_image_candidates` (image au format stockée en base, supprimées après 14 jours) : `GET /candidates`,
   aperçu protégé `GET /candidates/:id/preview?size=thumb|full`, `POST /candidates/:id/publish` (→ `DevicesService.addPhoto` :
   UploadThing, anti-doublon, transmission aux boutiques), `/reject`, `POST /candidates/publish` (choisies, ou lot ≥ note).
