@@ -17,7 +17,8 @@ const matches = (doc: any, query: any = {}): boolean =>
         if (op === '$lt') return value < arg;
         if (op === '$gt') return value > arg;
         if (op === '$in') return arg.some((x: any) => eq(x, value));
-        if (op === '$ne') return !eq(value, arg);
+        // Comme MongoDB : { $ne: null } exclut aussi les champs absents
+        if (op === '$ne') return arg === null ? value !== null && value !== undefined : !eq(value, arg);
         if (op === '$nin') return !arg.some((x: any) => eq(x, value));
         if (op === '$regex') return new RegExp(arg, (cond as { $options?: string }).$options || '').test(String(value ?? ''));
         if (op === '$options') return true;

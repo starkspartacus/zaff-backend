@@ -27,7 +27,6 @@ const cleanSpecs = (list?: { label: string; value: string }[]) =>
     .map((s) => ({ label: String(s?.label || '').trim().slice(0, 40), value: String(s?.value || '').trim().slice(0, 160) }))
     .filter((s) => s.label && s.value)
     .slice(0, 30);
-const escapeRegex = (v: string) => v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /**
  * Catalogue global des appareils, tenu par l'administrateur de la plateforme.
@@ -124,12 +123,20 @@ export class DevicesService implements OnModuleInit {
 
   // ─── Administration ───
 
-  async list(q: { search?: string; category?: string; brand?: string; photos?: 'missing' | 'with'; sort?: 'name' | 'popular'; page?: number; limit?: number }) {
+  async list(q: { search?: string; category?: string; brand?: string; photos?: 'missing' | 'with'; review?: 'ai'; sort?: 'name' | 'popular'; page?: number; limit?: number }) {
     const filter: Record<string, unknown> = {};
     if (q.category) filter.category = q.category;
     if (q.brand) filter.brandKey = imageKey(q.brand);
-    if (q.search?.trim()) filter.$or = [{ modelKey: { $regex: escapeRegex(imageKey(q.search)) } }, { brandKey: { $regex: escapeRegex(imageKey(q.search)) } }];
     let docs = await this.model.find(filter).sort({ brand: 1, model: 1 }).lean().exec();
+    // Recherche mot par mot dans « marque + modèle » (« Acer Nitro V 15 », « nitro 15 », « galaxy a55 »…)
+    const words = imageKey(q.search).split(' ').filter(Boolean);
+    if (words.length) {
+      docs = docs.filter((d: any) => {
+        const hay = ` ${d.brandKey} ${d.modelKey} ${imageKey(d.model)} `;
+        return words.every((w) => hay.includes(` ${w}`));
+      });
+    }
+    if (q.review === 'ai') docs = docs.filter((d: any) => !!d.aiFilledAt);
     if (q.photos === 'missing') docs = docs.filter((d: any) => !(d.photos || []).length);
     if (q.photos === 'with') docs = docs.filter((d: any) => (d.photos || []).length);
     // « Les plus utilisés d'abord » : l'admin photographie en priorité les appareils présents dans le plus de boutiques
@@ -155,6 +162,7 @@ export class DevicesService implements OnModuleInit {
       usedDevices: used.length,
       usedWithPhotos: used.filter((d) => (d.photos || []).length).length,
       requests: this.requests ? await this.requests.countDocuments({ status: 'open' }) : 0,
+      aiToCheck: await this.model.countDocuments({ aiFilledAt: { $ne: null } }),
     };
   }
 
@@ -338,15 +346,16 @@ export class DevicesService implements OnModuleInit {
    */
   async applyAiFacts(id: string, facts: { colors?: { name: string; hex?: string | null }[]; variants?: string[]; specs?: { label: string; value: string }[] }) {
     const d = await this.doc(id);
-    const set: Record<string, unknown> = { aiFilledAt: new Date() };
+    const set: Record<string, unknown> = {};
     const changed: string[] = [];
+    const few = (list: string[]) => `${list.slice(0, 4).join(', ')}${list.length > 4 ? `… (${list.length})` : ''}`;
     const hexOk = (h?: string | null) => (h && /^#[0-9a-f]{6}$/i.test(h) ? h.toLowerCase() : null);
     const aiColors = (facts.colors || []).map((c) => ({ name: String(c?.name || '').trim().slice(0, 40), hex: hexOk(c?.hex) })).filter((c) => c.name).slice(0, 20);
     let colors: string[] = d.colors || [];
     if (!colors.length && aiColors.length) {
       colors = clean(aiColors.map((c) => c.name));
       set.colors = colors;
-      changed.push('coloris');
+      changed.push(`coloris (${few(colors)})`);
     }
     const codes: Array<{ name: string; hex: string }> = [...(d.colorCodes || [])];
     for (const name of colors) {
@@ -359,19 +368,31 @@ export class DevicesService implements OnModuleInit {
       changed.push('codes couleur');
     }
     if (!(d.variants || []).length && facts.variants?.length) {
-      set.variants = clean(facts.variants.map((v) => String(v).slice(0, 60)));
-      changed.push('capacités');
+      const variants = clean(facts.variants.map((v) => String(v).slice(0, 60)));
+      set.variants = variants;
+      changed.push(`capacités (${few(variants)})`);
     }
     if (!(d.specs || []).length && facts.specs?.length) {
       const specs = cleanSpecs(facts.specs);
       if (specs.length) {
         set.specs = specs;
-        changed.push('fiche technique');
+        changed.push(`fiche technique (${specs.length} ligne${specs.length > 1 ? 's' : ''})`);
       }
     }
+    // « À vérifier » seulement si l'IA a vraiment ajouté quelque chose
+    if (!changed.length) return changed;
+    set.aiFilledAt = new Date();
     await this.model.updateOne({ _id: d._id }, { $set: set });
     this.invalidate();
     return changed;
+  }
+
+  /** L'admin a relu la fiche complétée par l'IA : elle sort de la liste « À vérifier » */
+  async markAiChecked(id: string) {
+    const d = await this.doc(id);
+    await this.model.updateOne({ _id: d._id }, { $set: { aiFilledAt: null } });
+    this.invalidate();
+    return this.get(id);
   }
 
   /** Fiche technique de plusieurs appareils (contrat de vente) */

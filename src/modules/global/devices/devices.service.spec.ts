@@ -81,4 +81,25 @@ describe('Catalogue global des appareils (administrateur)', () => {
     await devices.removeReportedPhoto(img.id);
     expect((await devices.get(items[0].id)).photos).toEqual([]);
   });
+
+  it('recherche mot par mot dans marque + modèle (« Acer Nitro V 15 », « nitro 15 », « galaxy a55 »)', async () => {
+    const names = async (search: string) => (await devices.list({ search })).items.map((d) => `${d.brand} ${d.model}`);
+    expect(await names('Acer Nitro V 15')).toEqual(['Acer Nitro V 15']);
+    expect(await names('nitro 15')).toEqual(['Acer Nitro V 15']);
+    expect(await names('samsung galaxy a55')).toEqual(['Samsung Galaxy A55 5G']);
+    expect((await devices.list({ search: 'Apple Watch Ultra 3' })).items.map((d) => d.model)).toEqual(['Apple Watch Ultra 3']);
+    expect((await devices.list({ search: 'inexistant 999' })).total).toBe(0);
+  });
+
+  it('fiche complétée par l\'IA : valeurs listées, « à vérifier » jusqu\'à la relecture de l\'admin', async () => {
+    const d = (await devices.list({ search: 'nitro v 15' })).items[0];
+    const changed = await devices.applyAiFacts(d.id, { colors: [{ name: 'Noir obsidienne', hex: '#111111' }], specs: [{ label: 'Écran', value: '15,6" 144 Hz' }] });
+    expect(changed).toEqual(['coloris (Noir obsidienne)', 'codes couleur', 'fiche technique (1 ligne)']);
+    expect((await devices.stats()).aiToCheck).toBe(1);
+    expect((await devices.list({ review: 'ai' })).items.map((x) => x.id)).toEqual([d.id]);
+    expect(await devices.applyAiFacts(d.id, { colors: [{ name: 'Rouge', hex: '#ff0000' }] })).toEqual([]); // déjà complet : rien
+    await devices.markAiChecked(d.id);
+    expect((await devices.stats()).aiToCheck).toBe(0);
+    expect((await devices.get(d.id)).colors).toEqual(['Noir obsidienne']);
+  });
 });

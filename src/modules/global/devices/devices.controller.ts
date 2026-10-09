@@ -39,6 +39,7 @@ class DeviceQueryDto {
   @IsOptional() @IsString() @MaxLength(80) brand?: string;
   @IsOptional() @IsIn(['missing', 'with']) photos?: 'missing' | 'with';
   @IsOptional() @IsIn(['name', 'popular']) sort?: 'name' | 'popular';
+  @IsOptional() @IsIn(['ai']) review?: 'ai';
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) page?: number;
   @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(200) limit?: number;
 }
@@ -149,6 +150,12 @@ export class PlatformDevicesController {
   @ApiOperation({ summary: "Ajouter une photo conforme à l'appareil (et au coloris)" })
   addPhoto(@Param('id') id: string, @UploadedFiles() files: Files | undefined, @Body() dto: PhotoDto) {
     return this.devices.addPhoto(id, files?.file?.[0], files?.thumb?.[0], dto.color);
+  }
+
+  @Patch(':id/ai-checked')
+  @ApiOperation({ summary: "Fiche complétée par l'IA relue par l'admin" })
+  aiChecked(@Param('id') id: string) {
+    return this.devices.markAiChecked(id);
   }
 
   @Patch(':id/photos/:imageId/default')

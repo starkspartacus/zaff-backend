@@ -278,7 +278,7 @@ describe('Photos des appareils trouvées par l\'IA', () => {
     expect((await devices.get(c.id)).colors).toEqual([]);
     const [j] = await service.listJobs();
     expect(j).toMatchObject({ id: job.id, kind: 'specs', status: 'done', processed: 3, found: 2, notFound: 1 });
-    expect(j.log.map((l: any) => l.detail)).toEqual(expect.arrayContaining([expect.stringMatching(/rien n'a été inventé/), expect.stringMatching(/Complété : coloris, codes couleur, fiche technique/)]));
+    expect(j.log.map((l: any) => l.detail)).toEqual(expect.arrayContaining([expect.stringMatching(/rien n'a été inventé/), expect.stringMatching(/Complété : coloris \(Bleu glacé, Noir, Lilas\), codes couleur, fiche technique \(1 ligne\)/)]));
     // Sélection automatique : seulement les fiches encore incomplètes
     const next = await service.createJob({ kind: 'specs', selection: 'incomplete', limit: 500 });
     expect(next.total).toBeGreaterThan(100);

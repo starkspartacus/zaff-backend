@@ -147,6 +147,10 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   publié seulement à partir de **3 boutiques** (`MIN_SHOPS_FOR_PRICE`), jamais de prix individuel. La session renvoie
   `establishment.currencyCode`.
 - **Contrat** : chaque ligne porte `specs` (fiche technique de l'appareil, 8 lignes max, `DevicesService.specsFor`).
+- **Recherche** `GET /platform/devices?search=` : mot par mot dans marque + modèle (« Acer Nitro V 15 », « nitro 15 »).
+  `review=ai` : fiches complétées par l'IA pas encore relues ; `PATCH /:id/ai-checked` les sort de la liste ;
+  `stats.aiToCheck`. `applyAiFacts` renvoie les valeurs ajoutées (« coloris (Noir, Bleu) », « fiche technique (5 lignes) »)
+  et ne marque la fiche « à vérifier » que si quelque chose a été ajouté.
 - Tri `GET /platform/devices?sort=popular` (les plus utilisés d'abord) ; `stats` : `usedDevices`, `usedWithPhotos`, `requests`.
 
 ## Photos par l'IA (`ai-images/`, `/platform/ai-images`, administrateur)
