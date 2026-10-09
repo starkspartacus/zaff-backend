@@ -171,6 +171,30 @@ describe('Photos des appareils trouvées par l\'IA', () => {
     expect(j).toMatchObject({ found: 2, published: 1 });
   });
 
+  it('même gamme / autre génération : proposée avec une pénalité, jamais publiée seule ; raisons des refus au journal', async () => {
+    const dev = await a55();
+    ai.verdicts = [
+      { index: 0, modelMatch: 'same-line', productPhoto: true, view: 'front', color: 'Noir', cleanBackground: true, textOrWatermark: false, score: 95, reason: 'Génération précédente probable' },
+      { index: 1, modelMatch: 'different', productPhoto: true, view: 'front', color: 'Bleu glacé', cleanBackground: true, textOrWatermark: false, score: 95, reason: 'Galaxy A35 (titre du fichier)' },
+    ];
+    await service.createJob({ deviceIds: [dev.id], auto: true, minScore: 80 });
+    await service.kick();
+    // Le vérificateur reçoit l'adresse source de chaque photo comme indice
+    expect(ai.calls[1].parts.some((p) => 'text' in p && /Image 0 \(source: /.test(p.text))).toBe(true);
+    expect((await devices.get(dev.id)).photos).toHaveLength(0);
+    const list = await service.listCandidates({});
+    expect(list.map((c) => [c.score, c.verdict.modelMatch])).toEqual([[85, 'same-line']]);
+    let [j] = await service.listJobs();
+    expect(j.log[0].detail).toMatch(/1 retenue\(s\) sur 3 \(1 sans avis\), 1 même gamme, génération à confirmer, 1 autre modèle/);
+
+    // Rien de retenu : les raisons sont données
+    ai.verdicts = [{ index: 0, modelMatch: 'different', productPhoto: true, view: 'front', color: null, cleanBackground: true, textOrWatermark: false, score: 90, reason: 'Galaxy A35 (titre du fichier)' }];
+    await service.createJob({ deviceIds: [dev.id] });
+    await service.kick();
+    [j] = await service.listJobs();
+    expect(j.log[0].detail).toMatch(/Écartées : Galaxy A35 \(titre du fichier\)/);
+  });
+
   it('clé refusée / quota épuisé : le lot s\'arrête avec la raison ; rejet d\'une photo', async () => {
     const dev = await a55();
     ai.failWith = new AiUnavailable('Gemini refuse la requête : API key not valid');

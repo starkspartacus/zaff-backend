@@ -190,8 +190,10 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   3) téléchargement **`safeFetch`** (http(s) seulement, IP privées / locales / métadonnées cloud refusées à la connexion
   même — pas de SSRF ni de contournement DNS —, 3 redirections, 8 Mo, 12 s) ; 4) **mise au format** `normalizeProductImage`
   (`sharp`) : fond blanc, bords retirés, carré WebP ≤ 1000 px (jamais agrandi, ≤ 550 Ko) + vignette 320 px, refus des SVG /
-  images < 300 px ; 5) **vérification par Gemini** (réponse JSON à schéma) : bon modèle (pas une autre génération), vraie photo
-  produit, vue, coloris, fond, texte / filigrane, note /100, raison en français ; note pénalisée (texte −25, fond −15, vue
+  images < 300 px ; 5) **vérification par Gemini** (réponse JSON à schéma) : modèle en 4 niveaux `modelMatch` (`exact` | `same-line` = même gamme,
+  autre génération −10 | `unsure` −20 | `different` = écartée, seulement sur indice clair), titre du fichier / adresse source
+  donné comme indice ; jamais de publication automatique hors `exact` ; journal : décompte par niveau, « sans avis », raisons
+  des photos écartées ; vraie photo produit, vue, coloris, fond, texte / filigrane, note /100, raison en français ; note pénalisée (texte −25, fond −15, vue
   de profil −15), gardée si ≥ 55 ; la meilleure par coloris (coloris ramené aux coloris officiels).
 - **Propositions** `ai_image_candidates` (image au format stockée en base, supprimées après 14 jours) : `GET /candidates`,
   aperçu protégé `GET /candidates/:id/preview?size=thumb|full`, `POST /candidates/:id/publish` (→ `DevicesService.addPhoto` :

@@ -47,9 +47,13 @@ interface Device {
   variants: string[];
 }
 
+type ModelMatch = 'exact' | 'same-line' | 'unsure' | 'different';
+
 interface Verdict {
   index: number;
-  sameModel: boolean;
+  /** Ancien format (oui / non), encore accepté */
+  sameModel?: boolean;
+  modelMatch?: ModelMatch;
   productPhoto: boolean;
   view: string;
   color: string | null;
@@ -62,6 +66,24 @@ interface Verdict {
 const MAX_DOWNLOADS = 14;
 const MAX_REVIEWED = 10;
 const MIN_KEEP_SCORE = 55;
+/** Pénalité selon la certitude sur le modèle : une autre génération de la même gamme reste proposée, à valider */
+const MATCH_PENALTY: Record<ModelMatch, number | null> = { exact: 0, 'same-line': 10, unsure: 20, different: null };
+const MATCH_LABEL: Record<ModelMatch, string> = { exact: 'modèle exact', 'same-line': 'même gamme, génération à confirmer', unsure: 'modèle probable, à confirmer', different: 'autre modèle' };
+
+const matchOf = (v: Verdict): ModelMatch =>
+  v.modelMatch && v.modelMatch in MATCH_PENALTY ? v.modelMatch : v.sameModel === true ? 'exact' : v.sameModel === false ? 'different' : 'unsure';
+
+/** Indice donné au vérificateur : titre du fichier Wikimedia, sinon adresse de la page */
+const sourceHint = (x: { url: string; page: string | null }) => {
+  const ref = x.page || x.url;
+  try {
+    const u = new URL(ref);
+    const file = decodeURIComponent(u.pathname.split('/').pop() || '').replace(/^File:/i, '');
+    return /wikimedia|wikipedia/.test(u.hostname) ? `file "${file.replace(/_/g, ' ')}"` : `${u.hostname}${decodeURIComponent(u.pathname).slice(0, 80)}`;
+  } catch {
+    return null;
+  }
+};
 // Un appareil à la fois : les paliers gratuits des IA limitent le nombre de requêtes par minute
 const DEVICE_CONCURRENCY = 1;
 
@@ -74,7 +96,7 @@ const VERDICT_SCHEMA = {
         type: 'OBJECT',
         properties: {
           index: { type: 'INTEGER' },
-          sameModel: { type: 'BOOLEAN' },
+          modelMatch: { type: 'STRING', enum: ['exact', 'same-line', 'unsure', 'different'] },
           productPhoto: { type: 'BOOLEAN' },
           view: { type: 'STRING', enum: ['front', 'back', 'front-and-back', 'angle', 'side', 'multiple', 'lifestyle', 'box', 'other'] },
           color: { type: 'STRING', nullable: true },
@@ -83,7 +105,7 @@ const VERDICT_SCHEMA = {
           score: { type: 'INTEGER' },
           reason: { type: 'STRING' },
         },
-        required: ['index', 'sameModel', 'productPhoto', 'view', 'cleanBackground', 'textOrWatermark', 'score', 'reason'],
+        required: ['index', 'modelMatch', 'productPhoto', 'view', 'cleanBackground', 'textOrWatermark', 'score', 'reason'],
       },
     },
   },
@@ -307,7 +329,7 @@ export class AiImagesService implements OnApplicationBootstrap {
       const inc: Record<string, number> = { processed: 1 };
       let name = deviceId;
       const note = (result: 'found' | 'none' | 'error', detail: string) =>
-        this.jobs.updateOne({ _id: job._id }, { $push: { log: { deviceId, name, result, detail: detail.slice(0, 400), at: new Date() } } });
+        this.jobs.updateOne({ _id: job._id }, { $push: { log: { deviceId, name, result, detail: detail.slice(0, 600), at: new Date() } } });
       try {
         const device = await this.devices.get(deviceId);
         name = displayName(device);
@@ -546,21 +568,29 @@ export class AiImagesService implements OnApplicationBootstrap {
     return { imgs: out.slice(0, MAX_REVIEWED), refused };
   }
 
-  private async review(device: Device, imgs: Array<{ img: NormalizedImage }>): Promise<Verdict[]> {
+  private async review(device: Device, imgs: Array<{ img: NormalizedImage; url: string; page: string | null }>): Promise<Verdict[]> {
     const parts: AiPart[] = [
       {
         text: [
           `You check product photos for a phone/computer shop catalogue. Expected device: "${device.brand} ${device.model}" (${device.category}).`,
           `Known official colours: ${device.colors.join(', ') || 'unknown'}.`,
-          'For each numbered image, tell: sameModel (exactly this model, not another generation/variant — check camera layout, notch, ports, logo),',
+          'For each numbered image, tell modelMatch:',
+          '- "exact": this model (design matches; the source title naming this model counts as evidence);',
+          '- "same-line": same product line but possibly another generation/size/variant (e.g. an older "Aspire 5" for "Aspire 5"); many names (Aspire 5, Galaxy A, IdeaPad 3…) cover several generations: that is NOT "different";',
+          '- "unsure": you cannot tell, nothing contradicts it;',
+          '- "different": clearly another product (another model name visible or in the source title, another line, another device type, obviously different design such as camera count or notch).',
+          'Then:',
           'productPhoto (studio shot of the device itself, not a box, not a person, not a screenshot), view, color (one of the known colours if possible),',
           'cleanBackground (plain white/light), textOrWatermark (any text, price, logo overlay or watermark added on the picture),',
           'score 0-100 for use as the main catalogue photo (100 = perfect official front shot on white), and a short reason IN FRENCH.',
-          'Be strict: if unsure about the model, sameModel=false and score below 50.',
+          'Be strict on photo quality; for the model, use "different" only with clear evidence.',
         ].join('\n'),
       },
     ];
-    imgs.forEach((x, i) => parts.push({ text: `Image ${i}:` }, { image: x.img.review, mime: 'image/jpeg' }));
+    imgs.forEach((x, i) => {
+      const hint = sourceHint(x);
+      parts.push({ text: `Image ${i}${hint ? ` (source: ${hint})` : ''}:` }, { image: x.img.review, mime: 'image/jpeg' });
+    });
     const res = await this.ai.generate({ parts, schema: VERDICT_SCHEMA, temperature: 0 });
     const json = parseJsonLoose<{ images?: Verdict[] }>(res.text);
     return (json?.images || []).filter((v) => Number.isInteger(v?.index) && v.index >= 0 && v.index < imgs.length);
@@ -602,9 +632,11 @@ export class AiImagesService implements OnApplicationBootstrap {
         if (v.textOrWatermark) score -= 25;
         if (!v.cleanBackground) score -= 15;
         if (!['front', 'front-and-back', 'angle'].includes(v.view)) score -= 15;
-        return { v, x: imgs[v.index], score: Math.max(0, score), color: this.matchColor(device, v.color) };
+        const match = matchOf(v);
+        score -= MATCH_PENALTY[match] ?? 100;
+        return { v, match, x: imgs[v.index], score: Math.max(0, score), color: this.matchColor(device, v.color) };
       })
-      .filter((s) => s.v.sameModel && s.v.productPhoto && s.score >= MIN_KEEP_SCORE)
+      .filter((s) => MATCH_PENALTY[s.match] !== null && s.v.productPhoto && s.score >= MIN_KEEP_SCORE)
       .sort((a, b) => b.score - a.score);
 
     // La meilleure photo de chaque coloris (et la meilleure tous coloris confondus)
@@ -627,7 +659,7 @@ export class AiImagesService implements OnApplicationBootstrap {
         deviceId: device.id,
         color: s.color,
         score: s.score,
-        verdict: { view: s.v.view, cleanBackground: s.v.cleanBackground, textOrWatermark: s.v.textOrWatermark, aiScore: s.v.score, reason: s.v.reason, aiColor: s.v.color || null, credit: s.x.credit },
+        verdict: { modelMatch: s.match, view: s.v.view, cleanBackground: s.v.cleanBackground, textOrWatermark: s.v.textOrWatermark, aiScore: s.v.score, reason: s.v.reason, aiColor: s.v.color || null, credit: s.x.credit },
         sourceUrl: s.x.url,
         pageUrl: s.x.page,
         sha256: s.x.sha256,
@@ -639,13 +671,25 @@ export class AiImagesService implements OnApplicationBootstrap {
         error: null,
         expiresAt: new Date(Date.now() + 14 * 24 * 3600 * 1000),
       });
-      if (job.auto && s.score >= job.minScore) {
+      // Publication automatique : seulement le modèle exact (une autre génération attend la validation de l'admin)
+      if (job.auto && s.match === 'exact' && s.score >= job.minScore) {
         const r = await this.publish(String(cand._id)).catch(() => null);
         if (r?.status === 'published') published++;
       }
     }
-    const rejected = verdicts.filter((v) => !v.sameModel).length;
-    notes.push(`Vérification : ${chosen.length} retenue(s) sur ${imgs.length}${rejected ? `, ${rejected} autre modèle` : ''}`);
+    const counts = new Map<string, number>();
+    for (const v of verdicts) {
+      const m = matchOf(v);
+      if (m !== 'exact') counts.set(MATCH_LABEL[m], (counts.get(MATCH_LABEL[m]) || 0) + 1);
+      if (!v.productPhoto) counts.set('pas une photo produit', (counts.get('pas une photo produit') || 0) + 1);
+    }
+    const tally = [...counts.entries()].map(([k, n]) => `${n} ${k}`).join(', ');
+    notes.push(`Vérification : ${chosen.length} retenue(s) sur ${imgs.length}${verdicts.length < imgs.length ? ` (${imgs.length - verdicts.length} sans avis)` : ''}${tally ? `, ${tally}` : ''}`);
+    // Raisons des photos écartées : l'admin comprend pourquoi rien n'a été retenu
+    if (!chosen.length) {
+      const why = [...new Set(verdicts.filter((v) => !scored.some((s) => s.v === v)).map((v) => String(v.reason || '').trim()).filter(Boolean))].slice(0, 2);
+      if (why.length) notes.push(`Écartées : ${why.map((r) => (r.length > 110 ? `${r.slice(0, 107)}…` : r)).join(' ; ')}`);
+    }
     return { kept: chosen.length, published, detail: notes.join(' · ') };
   }
 
