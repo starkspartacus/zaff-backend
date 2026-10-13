@@ -48,7 +48,7 @@ export class StockService {
 
     // Mise à jour atomique : une vente faite au même moment n'est jamais écrasée
     let updated: any;
-    let moved = dto.quantity;
+    const moved = dto.quantity;
     if (dto.movementType === StockMovementType.IN) {
       if (dto.quantity < 1) throw new BadRequestException('Indiquez une quantité d\'au moins 1.');
       updated = await prodModel.findOneAndUpdate({ _id: product._id }, { $inc: { stockQuantity: dto.quantity } }, { new: true });
@@ -65,9 +65,10 @@ export class StockService {
       }
     } else {
       // Ajustement : le stock compté devient le stock
+      // La quantité d'un ajustement est le nouveau stock compté (affiché « = N »), l'écart va dans la note
       const before = product.stockQuantity;
       updated = await prodModel.findOneAndUpdate({ _id: product._id }, { $set: { stockQuantity: dto.quantity } }, { new: true });
-      moved = Math.abs(dto.quantity - before);
+      dto.notes = [`Stock compté : ${before} → ${dto.quantity}`, dto.notes].filter(Boolean).join(' — ');
     }
 
     const movement = await movModel.create({

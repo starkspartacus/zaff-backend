@@ -27,7 +27,7 @@ Priorité absolue : une expérience simple et compréhensible (UI et messages d'
 **Une base par boutique** `zaff_tenant_<slug>` (via `TenantConnectionService.getModel(db, name, schema)`) :
 users, products, product_units, sales, sale_returns, stock_movements, customers, suppliers, purchase_orders,
 repairs, warranties, categories, brands, notifications, push_subscriptions, cash_closings, product_returns, credit_notes,
-sales_contract_versions.
+sales_contract_versions, customer_payments, counters.
 Paramètres de la boutique (dont `settings.returnPolicy`, `settings.salesContract`) : dans `establishments` (base globale), chargés à chaque requête par `TenantGuard`.
 Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenant('databaseName')` aux services.
 
@@ -63,6 +63,36 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 - Vente : réservation **atomique** (`findOneAndUpdate` sur `status: in_stock`) + décrément conditionnel du stock,
   avec rollback de tout ce qui a été fait si une ligne échoue. Ne jamais remplacer par un « lire puis écrire ».
 - Un code scanné est résolu par `GET /units/lookup/:code` : N° de série d'une unité, sinon code-barres d'un modèle.
+- Produit **sans** N° de série : mouvements `POST /stock/movements` (propriétaire, magasinier) **atomiques** (`$inc` conditionnel,
+  jamais « lire puis écrire »), quantité entière ≥ 0 ; ajustement = nouveau stock compté (`quantity`), écart dans la note.
+  Stock saisi dans la fiche produit (création, modification) → mouvement tracé. `PUT /catalog/products/:id` validé
+  (`UpdateProductDto`), prix et quantités jamais négatifs. Unité `in_repair` (appareil d'un client) jamais supprimable.
+
+## Vente, revendeurs et crédit (`sales/`, `customers/`)
+- **Le serveur fixe les prix et les totaux** : prix du catalogue (tarif revendeur `resellerPrice` pour une vente `reseller`,
+  sinon `salePrice`), prix négocié accepté ; `total` ligne = prix × quantité, sous-total, remise (0 ≤ remise ≤ sous-total),
+  total recalculés — les montants envoyés par l'écran sont ignorés. Quantité entière ≥ 1.
+- **Un vendeur ne vend pas à perte** (`role: seller`) : prix sous le prix d'achat, ou remise qui ferait passer la vente sous
+  le coût d'achat → refus « Demandez au propriétaire ». Le propriétaire peut.
+- **N° de facture** : séquence atomique `counters` (`nextSequence`, `common/sequence.ts`), départ = plus grand numéro existant.
+  Échec après la réservation (création de la vente…) → appareils, stock et avoir **rendus** (rollback).
+- **Tarif revendeur réservé aux revendeurs** : `saleType: reseller` exige un client `isReseller` (ou créé comme tel).
+  Téléphone du client normalisé E.164 avec le pays de la boutique (même client retrouvé quelle que soit l'écriture).
+- **Vente à crédit** (`paymentMethod: credit`) : client obligatoire ; `depositAmount` (acompte, ≤ montant, `depositMethod`)
+  enregistré comme `customer_payments` (`kind: deposit`) ; `amountDue` = reste, `paymentStatus` `paid | partial | unpaid` ;
+  `Customer.balance` += reste.
+- **Encaissement** `POST /customers/:id/payments { amount, method }` (propriétaire, vendeur) : débit atomique de la dette
+  (jamais plus que ce qui est dû), réparti sur les ventes **les plus anciennes d'abord** (`allocations`), notification
+  `customer.payment` (→ admin). `GET /customers?type=debtors`, `GET /customers/:id` → ventes + paiements.
+- **Retour de marchandise** `POST /sales/:id/return` (propriétaire ; lot invendu d'un revendeur) : article de la facture
+  seulement, jamais plus que vendu − déjà retourné, N° de série obligatoire pour un appareil suivi (réservation atomique
+  `sold → in_stock`) ; valeur (remise répartie) réduit d'abord le reste à payer, le surplus est remboursé (`refundMethod`,
+  paiement négatif `kind: refund` dans la caisse de celui qui fait le retour) ; `returnStatus` `partial | returned`,
+  `returnedAmount` déduit du CA du tableau de bord ; `receivables` = argent encore dû.
+- **Clients** : propriétaire et vendeur (le magasinier n'y a pas accès) ; suppression = propriétaire, refusée s'il reste une
+  dette ; numéro unique par boutique ; `UpdateCustomerDto` (le solde n'est jamais modifiable par l'API).
+- **Caisse** : acomptes et paiements reçus comptés dans la caisse du collaborateur qui les encaisse (`collectedBy`,
+  `closingId`, `collections` dans la clôture) ; la part « crédit » d'une vente n'est pas de l'argent à remettre.
 
 ## Retours, avoirs et garantie (`/returns`, `/credit-notes`, `/settings/return-policy`)
 - **Politique configurée par le propriétaire** (`settings/return-policy.ts`, valeurs par défaut + `resolveReturnPolicy`) :
@@ -213,9 +243,11 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   d'abord puis les plus utilisées ; jamais les photos encore « en attente ». Clé du modèle **sans la marque en tête**
   (`modelKeyOf` : « Samsung Galaxy A55 » = « Galaxy A55 »). `GET /global/images/:id/file` : **public** (balise `<img>`) —
   redirection vers le CDN UploadThing, ou fichier servi depuis MongoDB (cache 1 an).
-- **Seul l'administrateur de la plateforme envoie des photos** (`POST /global/images` et `/platform/devices/:id/photos`,
-  PlatformAdminGuard) : les boutiques ne photographient plus leurs produits, elles choisissent une photo du catalogue. Vrai
-  type vérifié par les premiers octets (JPEG / PNG / WebP, pas de SVG), 600 Ko max, une même photo stockée une fois.
+- **Photos du catalogue** : envoyées par l'administrateur de la plateforme (`POST /global/images`, `/platform/devices/:id/photos`,
+  PlatformAdminGuard). **Photo de la boutique** `POST /global/images/shop` (propriétaire, magasinier) : `shopOnly: true`,
+  proposée **à cette boutique seulement** (`search(q, tenantId)`, en premier), `attach` refuse la photo privée d'une autre
+  boutique ; en attente jusqu'à l'enregistrement du produit, effacée si plus utilisée (même cycle de vie). Vrai type vérifié
+  par les premiers octets (JPEG / PNG / WebP, pas de SVG), 600 Ko max, une même photo stockée une fois.
   Si la fiche ne peut pas être créée après l'envoi, le fichier UploadThing est supprimé.
 - **Cycle de vie (aucune photo orpheline)** :
   - photos d'appareil envoyées par l'admin avec `library: true` + `deviceId` (gardées même sans produit) ; retirer une photo
@@ -250,7 +282,8 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 - Types d'événements actuels : `sale.created` (→ admin, avec le mode de paiement), `units.added` (→ admin),
   `catalog.photo` (→ admin, storekeeper : photo officielle ajoutée aux produits),
   `stock.low` (→ admin, storekeeper), `cash.closed` (→ admin), `cash.validated` (→ vendeur),
-  `return.created` (→ admin, + storekeeper si atelier), `repair.ready` (→ admin, storekeeper).
+  `return.created` (→ admin, + storekeeper si atelier), `repair.ready` (→ admin, storekeeper),
+  `customer.payment` (→ admin : paiement d'un client à crédit).
 - Une notification vise des rôles (`roles`) et/ou des personnes (`userIds`, salon `u:<userId>`).
 
 ## Notifications push (Web Push, `PushService`)
@@ -268,7 +301,8 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 - Port 8000 par défaut, préfixe `/api`, Swagger sur `/api/docs`.
 - **Aucun secret dans le code.** Configuration lue uniquement depuis l'environnement et validée au démarrage
   (`src/config/env.validation.ts`) : `MONGODB_URI` et `JWT_SECRET` obligatoires (JWT ≥ 32 caractères en
-  production), sinon l'app refuse de démarrer. En local : copier `.env.example` en `.env` (ignoré par git).
+  production), sinon l'app refuse de démarrer. En local : créer un `.env` (ignoré par git) avec les variables lues par
+  `env.validation.ts` / `configuration.ts`.
   Lire la config avec `getOrThrow`, jamais de valeur de repli pour un secret. `UPLOADTHING_TOKEN` (facultatif) : stockage
   des photos chez UploadThing (Dashboard > API Keys > V7) ; sans lui, photos dans MongoDB.
 - ⚠️ Un ancien mot de passe MongoDB et un ancien secret JWT figurent dans l'historique git (avant cette règle) :

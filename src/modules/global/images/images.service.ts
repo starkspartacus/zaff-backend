@@ -109,7 +109,7 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
   }
 
   /** Photos d'un modèle (la couleur demandée d'abord), ou de la marque dans la catégorie */
-  async search(q: { brand?: string; model?: string; color?: string; category?: string }) {
+  async search(q: { brand?: string; model?: string; color?: string; category?: string }, establishmentId?: string | null) {
     const brandKey = imageKey(q.brand);
     const modelKey = modelKeyOf(q.brand, q.model);
     if (!brandKey && !modelKey) return [];
@@ -118,7 +118,10 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
     if (brandKey) filter.brandKey = brandKey;
     if (modelKey) filter.modelKey = modelKey;
     else if (q.category) filter.category = q.category;
-    const docs = await this.model.find(filter).sort({ usage: -1, createdAt: -1 }).limit(48).lean().exec();
+    const all = await this.model.find(filter).sort({ usage: -1, createdAt: -1 }).limit(96).lean().exec();
+    // Photos prises par une boutique : proposées à cette boutique seulement (en premier)
+    const mine = (d: any) => !!establishmentId && String(d.establishmentId) === String(establishmentId);
+    const docs = [...all.filter((d: any) => d.shopOnly && mine(d)), ...all.filter((d: any) => !d.shopOnly)].slice(0, 48);
     const colorKey = imageKey(q.color);
     const ranked = colorKey ? [...docs].sort((a, b) => Number(b.colorKey === colorKey) - Number(a.colorKey === colorKey)) : docs;
     return ranked.slice(0, 24).map((d) => this.view(d));
@@ -144,7 +147,7 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
     file: { buffer: Buffer; size: number } | undefined,
     meta: { brand: string; model: string; color?: string; category?: string; deviceId?: string },
     by: ImageUploader,
-    opts: { library?: boolean; thumb?: { buffer: Buffer; size: number } } = {},
+    opts: { library?: boolean; shopOnly?: boolean; thumb?: { buffer: Buffer; size: number } } = {},
   ) {
     if (!file?.buffer?.length) throw new BadRequestException('Aucune photo reçue.');
     const thumb = opts.thumb?.buffer?.length ? opts.thumb : null;
@@ -157,6 +160,10 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
     // Même photo déjà présente : on la réutilise (et on la garde en photothèque si demandé)
     const sha256 = createHash('sha256').update(file.buffer).digest('hex');
     const existing = await this.model.findOne({ sha256 }).lean().exec();
+    // Même fichier déjà envoyé par une autre boutique en privé : chaque boutique garde sa propre fiche
+    if (existing && existing.shopOnly && String(existing.establishmentId) !== String(by.establishmentId)) {
+      throw new BadRequestException('Cette photo est déjà utilisée par une autre boutique : prenez votre propre photo.');
+    }
     if (existing) {
       if (opts.library && !existing.library) await this.model.updateOne({ _id: existing._id }, { $set: { library: true, pending: false } });
       return { ...this.view({ ...existing, library: existing.library || !!opts.library }), duplicate: true };
@@ -192,6 +199,7 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
         sha256,
         library: !!opts.library,
         pending: !opts.library,
+        shopOnly: !!opts.shopOnly,
         establishmentId: by.establishmentId && Types.ObjectId.isValid(by.establishmentId) ? new Types.ObjectId(by.establishmentId) : null,
         establishmentName: by.establishmentName || null,
         uploadedBy: by.name || null,
@@ -221,9 +229,13 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
   }
 
   /** Un produit enregistré utilise cette photo */
-  async attach(id?: string | null) {
+  async attach(id?: string | null, establishmentId?: string | null) {
     if (!id) return;
     if (!Types.ObjectId.isValid(id)) throw new BadRequestException('Photo invalide.');
+    // La photo privée d'une boutique ne peut pas être utilisée par une autre
+    const owned = await this.model.findById(id).select('shopOnly establishmentId').lean().exec();
+    if (!owned) throw new BadRequestException("Cette photo n'existe plus : choisissez-en une autre.");
+    if (owned.shopOnly && String(owned.establishmentId) !== String(establishmentId)) throw new BadRequestException('Photo indisponible : choisissez-en une autre.');
     const img = await this.model.findOneAndUpdate({ _id: id }, { $inc: { usage: 1 }, $set: { pending: false } }, { new: true }).exec();
     if (!img) throw new BadRequestException("Cette photo n'existe plus : choisissez-en une autre.");
   }

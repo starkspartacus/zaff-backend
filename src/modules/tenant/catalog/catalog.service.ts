@@ -6,7 +6,15 @@ import { Category, CategorySchema } from '../common/schemas/category.schema';
 import { Brand, BrandSchema } from '../common/schemas/brand.schema';
 import { Product, ProductSchema } from '../common/schemas/product.schema';
 import { ProductUnit, ProductUnitSchema } from '../common/schemas/product-unit.schema';
-import { CreateCategoryDto, CreateBrandDto, CreateProductDto, SetupHierarchyDto } from './dto/create-catalog.dto';
+import { CreateCategoryDto, CreateBrandDto, CreateProductDto, SetupHierarchyDto, UpdateProductDto } from './dto/create-catalog.dto';
+import { StockMovement, StockMovementSchema } from '../common/schemas/stock-movement.schema';
+import { StockMovementType, StockReferenceType } from '../../../common/enums/stock-movement.enum';
+
+export interface CatalogActor {
+  /** Boutique (base globale) : une photo privée d'une autre boutique est refusée */
+  establishmentId?: string;
+  name?: string;
+}
 
 @Injectable()
 export class CatalogService {
@@ -27,6 +35,20 @@ export class CatalogService {
   private getBrandModel(db: string) { return this.tenantConnectionService.getModel<Brand>(db, Brand.name, BrandSchema); }
   private getProductModel(db: string) { return this.tenantConnectionService.getModel<Product>(db, Product.name, ProductSchema); }
   private getUnitModel(db: string) { return this.tenantConnectionService.getModel<ProductUnit>(db, ProductUnit.name, ProductUnitSchema); }
+  private getMovementModel(db: string) { return this.tenantConnectionService.getModel<StockMovement>(db, StockMovement.name, StockMovementSchema); }
+
+  /** Stock saisi dans la fiche (produit sans N° de série) : tracé comme un mouvement */
+  private async logStock(db: string, productId: unknown, from: number, to: number, actor?: CatalogActor) {
+    if (from === to) return;
+    await this.getMovementModel(db).create({
+      productId,
+      movementType: from === 0 && to > 0 ? StockMovementType.IN : StockMovementType.ADJUSTMENT,
+      // Entrée : quantité ajoutée ; ajustement : nouveau stock (affiché « = N »)
+      quantity: to,
+      referenceType: StockReferenceType.MANUAL,
+      notes: `${from === 0 ? 'Stock initial' : `Stock corrigé ${from} → ${to}`} (fiche produit${actor?.name ? `, par ${actor.name}` : ''})`,
+    });
+  }
 
   private slugify(t: string): string {
     return t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
@@ -80,7 +102,7 @@ export class CatalogService {
     }
   }
 
-  async createProduct(db: string, dto: CreateProductDto) {
+  async createProduct(db: string, dto: CreateProductDto, actor?: CatalogActor) {
     const model = this.getProductModel(db);
     const sku = dto.sku.trim().toUpperCase();
     const existing = await model.findOne({ sku });
@@ -89,7 +111,7 @@ export class CatalogService {
     // Produit à N° de série : le stock part de 0 et ne monte qu'en scannant des unités
     const stockQuantity = dto.hasSerialNumbers ? 0 : dto.stockQuantity || 0;
     // La photo est rattachée au produit (elle n'est plus « en attente ») ; si le produit échoue, elle est libérée
-    await this.images?.attach(dto.imageId);
+    await this.images?.attach(dto.imageId, actor?.establishmentId);
     let created;
     try {
       created = await model.create({ ...dto, sku, barcode: dto.barcode?.trim() || null, stockQuantity });
@@ -97,11 +119,12 @@ export class CatalogService {
       await this.images?.release(dto.imageId);
       throw e;
     }
+    await this.logStock(db, created._id, 0, stockQuantity, actor);
     this.track(db, created);
     return created;
   }
 
-  async updateProduct(db: string, id: string, dto: Partial<CreateProductDto>) {
+  async updateProduct(db: string, id: string, dto: UpdateProductDto, actor?: CatalogActor) {
     const model = this.getProductModel(db);
     const product = await model.findById(id);
     if (!product) throw new NotFoundException('Produit non trouvé.');
@@ -121,12 +144,17 @@ export class CatalogService {
     }
     // Le stock d'un produit à N° de série est calculé à partir des unités
     if (willBeSerial) delete update.stockQuantity;
+    else if (update.stockQuantity !== undefined) {
+      const qty = Number(update.stockQuantity);
+      if (!Number.isInteger(qty) || qty < 0) throw new BadRequestException('Le stock doit être un nombre entier positif.');
+      update.stockQuantity = qty;
+    }
     if (dto.sku) update.sku = dto.sku.trim().toUpperCase();
 
     // Nouvelle photo : rattachée avant l'enregistrement ; l'ancienne est libérée après (et effacée si plus utilisée)
     const previousImage = product.imageId ?? null;
     const imageChanged = dto.imageId !== undefined && String(dto.imageId ?? '') !== String(previousImage ?? '');
-    if (imageChanged) await this.images?.attach(dto.imageId);
+    if (imageChanged) await this.images?.attach(dto.imageId, actor?.establishmentId);
     let saved;
     try {
       saved = await model.findByIdAndUpdate(id, update, { new: true }).exec();
@@ -135,6 +163,7 @@ export class CatalogService {
       throw e;
     }
     if (imageChanged) await this.images?.release(previousImage);
+    if (!willBeSerial && update.stockQuantity !== undefined) await this.logStock(db, product._id, product.stockQuantity, update.stockQuantity, actor);
     this.track(db, saved);
     return saved;
   }

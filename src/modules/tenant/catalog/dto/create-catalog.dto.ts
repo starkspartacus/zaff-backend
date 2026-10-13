@@ -1,5 +1,5 @@
-import { IsString, IsNotEmpty, IsNumber, IsOptional, IsArray, IsBoolean, IsIn, MaxLength, Matches } from 'class-validator';
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsString, IsNotEmpty, IsNumber, IsOptional, IsArray, IsBoolean, IsIn, MaxLength, Matches, Min } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 
 export class CreateCategoryDto {
   @ApiProperty({ example: 'Smartphones' })
@@ -78,24 +78,29 @@ export class CreateProductDto {
 
   @ApiProperty({ example: 650000 })
   @IsNumber()
+  @Min(0, { message: 'Les prix et quantités ne peuvent pas être négatifs.' })
   purchasePrice: number;
 
   @ApiProperty({ example: 850000 })
   @IsNumber()
+  @Min(0, { message: 'Les prix et quantités ne peuvent pas être négatifs.' })
   salePrice: number;
 
   @ApiPropertyOptional({ example: 780000 })
   @IsNumber()
+  @Min(0, { message: 'Les prix et quantités ne peuvent pas être négatifs.' })
   @IsOptional()
   resellerPrice?: number;
 
   @ApiPropertyOptional({ example: 10, description: 'Ignoré pour les produits à N° de série (stock = unités scannées)' })
   @IsNumber()
+  @Min(0, { message: 'Les prix et quantités ne peuvent pas être négatifs.' })
   @IsOptional()
   stockQuantity?: number;
 
   @ApiPropertyOptional({ example: 3 })
   @IsNumber()
+  @Min(0, { message: 'Les prix et quantités ne peuvent pas être négatifs.' })
   @IsOptional()
   minStockAlert?: number;
 
@@ -149,3 +154,6 @@ export class SetupHierarchyDto {
   @IsArray()
   brands: string[];
 }
+
+/** Modification d'un produit : mêmes règles que la création, tous les champs facultatifs */
+export class UpdateProductDto extends PartialType(CreateProductDto) {}

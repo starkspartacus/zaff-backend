@@ -59,6 +59,18 @@ describe("Photos partagées : UploadThing, sans fichier orphelin", () => {
     expect(await images.search({ ...meta, model: 'Samsung Galaxy A55 5G' })).toHaveLength(1);
   });
 
+  it('photo prise par une boutique : visible et utilisable par elle seule, effacée si le produit ne la garde pas', async () => {
+    const img = await images.upload(file(7), meta, shopA, { shopOnly: true });
+    await images.attach(img.id, shopA.establishmentId);
+    expect((await images.search(meta, shopA.establishmentId)).map((x: any) => x.id)).toEqual([img.id]);
+    expect(await images.search(meta, 'autre-boutique')).toEqual([]);
+    await expect(images.attach(img.id, 'autre-boutique')).rejects.toThrow(/indisponible/);
+    await expect(images.upload(file(7), meta, { ...shopA, establishmentId: new Types.ObjectId().toString() }, { shopOnly: true })).rejects.toThrow(/autre boutique/);
+    await images.release(img.id);
+    expect(doc(img.id)).toBeUndefined();
+    expect(ut.files.size).toBe(0);
+  });
+
   it('remplacement de la photo d\'un produit : l\'ancienne est effacée chez UploadThing et dans la base', async () => {
     const conn = fakeTenantConnection();
     const catalog = new CatalogService(conn as any, images);

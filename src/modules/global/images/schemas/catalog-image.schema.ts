@@ -87,6 +87,10 @@ export class CatalogImage {
   @Prop({ default: true, index: true })
   pending: boolean;
 
+  /** Photo prise par une boutique pour ses produits : visible par cette boutique seulement */
+  @Prop({ default: false, index: true })
+  shopOnly: boolean;
+
   @Prop({ required: true })
   bytes: number;
 

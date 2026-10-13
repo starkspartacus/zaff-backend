@@ -40,8 +40,8 @@ export class ImagesController {
   @ApiBearerAuth()
   @UseGuards(JwtAuthGuard)
   @ApiOperation({ summary: "Photos partagées d'un modèle (toutes boutiques)" })
-  search(@Query() q: ImageQueryDto) {
-    return this.images.search(q);
+  search(@Query() q: ImageQueryDto, @CurrentUser() user: any) {
+    return this.images.search(q, user?.tenantId);
   }
 
   /** Photothèque de ma boutique (import en masse, suppression) */
@@ -104,6 +104,39 @@ export class ImagesController {
     @CurrentUser() user: any,
   ) {
     return this.images.upload(files?.file?.[0], dto, { establishmentId: null, establishmentName: 'ZAFF', name: user?.name }, { library: true, thumb: files?.thumb?.[0] });
+  }
+
+  /**
+   * Photo prise par la boutique pour son produit (propriétaire, magasinier) : envoyée à l'enregistrement du
+   * produit, visible par cette boutique seulement, effacée si le produit ne l'utilise plus.
+   */
+  @Post('shop')
+  @ApiBearerAuth()
+  @ApiConsumes('multipart/form-data')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.STOREKEEPER)
+  @UseInterceptors(
+    FileFieldsInterceptor(
+      [
+        { name: 'file', maxCount: 1 },
+        { name: 'thumb', maxCount: 1 },
+      ],
+      { limits: { fileSize: MAX_IMAGE_BYTES, files: 2 } },
+    ),
+  )
+  @ApiOperation({ summary: 'Envoyer la photo de mon produit (prise ou choisie sur le téléphone)' })
+  async uploadShop(
+    @UploadedFiles() files: { file?: { buffer: Buffer; size: number }[]; thumb?: { buffer: Buffer; size: number }[] } | undefined,
+    @Body() dto: ImageUploadDto,
+    @CurrentUser() user: any,
+  ) {
+    const shop = user?.tenantId ? await this.establishments.findById(user.tenantId).catch(() => null) : null;
+    return this.images.upload(
+      files?.file?.[0],
+      dto,
+      { establishmentId: user?.tenantId || null, establishmentName: (shop as any)?.name || null, name: user?.name },
+      { library: false, shopOnly: true, thumb: files?.thumb?.[0] },
+    );
   }
 
   /** Annule une photo envoyée pour un produit dont l'enregistrement a échoué (évite les fichiers orphelins) */

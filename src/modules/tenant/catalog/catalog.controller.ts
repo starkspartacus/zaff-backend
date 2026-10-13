@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { CatalogService } from './catalog.service';
-import { CreateCategoryDto, CreateBrandDto, CreateProductDto, SetupHierarchyDto } from './dto/create-catalog.dto';
+import { CreateCategoryDto, CreateBrandDto, CreateProductDto, UpdateProductDto, SetupHierarchyDto } from './dto/create-catalog.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../../../common/guards/tenant.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
@@ -9,6 +9,7 @@ import { Roles } from '../../../common/decorators/roles.decorator';
 import { Role } from '../../../common/enums/role.enum';
 import { Invalidates } from '../../realtime/invalidates.decorator';
 import { CurrentTenant } from '../../../common/decorators/current-tenant.decorator';
+import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 
 @ApiTags('Tenant - Catalog (Products, Categories, Brands)')
 @ApiBearerAuth()
@@ -59,19 +60,15 @@ export class CatalogController {
   @Roles(Role.ADMIN, Role.STOREKEEPER)
   @Post('products')
   @ApiOperation({ summary: 'Ajouter un produit' })
-  createProduct(@CurrentTenant('databaseName') db: string, @Body() dto: CreateProductDto) {
-    return this.catalogService.createProduct(db, dto);
+  createProduct(@CurrentTenant() tenant: any, @CurrentUser() user: any, @Body() dto: CreateProductDto) {
+    return this.catalogService.createProduct(tenant.databaseName, dto, { establishmentId: String(tenant._id), name: user?.name });
   }
 
   @Roles(Role.ADMIN, Role.STOREKEEPER)
   @Put('products/:id')
   @ApiOperation({ summary: 'Mettre à jour un produit' })
-  updateProduct(
-    @CurrentTenant('databaseName') db: string,
-    @Param('id') id: string,
-    @Body() dto: Partial<CreateProductDto>,
-  ) {
-    return this.catalogService.updateProduct(db, id, dto);
+  updateProduct(@CurrentTenant() tenant: any, @CurrentUser() user: any, @Param('id') id: string, @Body() dto: UpdateProductDto) {
+    return this.catalogService.updateProduct(tenant.databaseName, id, dto, { establishmentId: String(tenant._id), name: user?.name });
   }
 
   @Roles(Role.ADMIN, Role.STOREKEEPER)
