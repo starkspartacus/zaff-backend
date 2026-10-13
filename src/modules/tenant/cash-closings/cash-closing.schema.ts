@@ -46,6 +46,10 @@ export class CashClosing {
   @Prop({ type: Object, default: { cash: 0, mobile: 0, count: 0 } })
   refunds: { cash: number; mobile: number; count: number };
 
+  /** Argent reçu des clients à crédit (acomptes, paiements de revendeurs, moins les remboursements de retours) */
+  @Prop({ type: Object, default: { amount: 0, count: 0 } })
+  collections: { amount: number; count: number };
+
   /** Espèces attendues (= totals.cash) et comptées par le vendeur */
   @Prop({ default: 0 })
   expectedCash: number;

@@ -49,8 +49,8 @@ export class UnitsController {
   @Post('sell')
   @Roles(Role.ADMIN, Role.SELLER)
   @ApiOperation({ summary: 'Vendre un appareil scanné (facture + mise à jour du stock)' })
-  sell(@CurrentTenant('databaseName') db: string, @CurrentUser() user: any, @Body() dto: SellUnitDto) {
-    return this.unitsService.sell(db, dto, { userId: user.userId, name: user.name });
+  sell(@CurrentTenant() tenant: any, @CurrentUser() user: any, @Body() dto: SellUnitDto) {
+    return this.unitsService.sell(tenant.databaseName, dto, { userId: user.userId, name: user.name, role: user.role }, tenant.countryCode);
   }
 
   @Patch(':id/status')

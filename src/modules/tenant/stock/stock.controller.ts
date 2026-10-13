@@ -9,6 +9,7 @@ import { Roles } from '../../../common/decorators/roles.decorator';
 import { Role } from '../../../common/enums/role.enum';
 import { Invalidates } from '../../realtime/invalidates.decorator';
 import { CurrentTenant } from '../../../common/decorators/current-tenant.decorator';
+import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 
 @ApiTags('Tenant - Stock')
 @ApiBearerAuth()
@@ -34,7 +35,7 @@ export class StockController {
   @Roles(Role.ADMIN, Role.STOREKEEPER)
   @Post('movements')
   @ApiOperation({ summary: 'Enregistrer une entrée/sortie/ajustement de stock' })
-  createMovement(@CurrentTenant('databaseName') db: string, @Body() dto: CreateStockMovementDto) {
-    return this.stockService.createMovement(db, dto);
+  createMovement(@CurrentTenant('databaseName') db: string, @CurrentUser() user: any, @Body() dto: CreateStockMovementDto) {
+    return this.stockService.createMovement(db, dto, { name: user.name });
   }
 }

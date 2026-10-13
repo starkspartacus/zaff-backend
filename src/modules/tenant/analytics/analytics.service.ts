@@ -48,7 +48,8 @@ export class AnalyticsService {
       await Promise.all([
         saleModel.aggregate([
           { $match: match },
-          { $group: { _id: null, count: { $sum: 1 }, revenue: { $sum: '$total' } } },
+          // Retours de lots revendeurs (`returnedAmount`) et reste à encaisser (ventes à crédit)
+          { $group: { _id: null, count: { $sum: 1 }, revenue: { $sum: '$total' }, resellerReturns: { $sum: '$returnedAmount' } } },
         ]),
         saleModel.aggregate([
           { $match: match },
@@ -96,7 +97,12 @@ export class AnalyticsService {
       0,
     );
     const revenue = salesAgg[0]?.revenue || 0;
-    const returnsAmount = returnsAgg[0]?.amount || 0;
+    const returnsAmount = (returnsAgg[0]?.amount || 0) + (salesAgg[0]?.resellerReturns || 0);
+    // Argent encore dû par les clients à crédit (toutes périodes)
+    const receivables = await this.getCustomerModel(db).aggregate([
+      { $match: { balance: { $gt: 0 } } },
+      { $group: { _id: null, amount: { $sum: '$balance' }, customers: { $sum: 1 } } },
+    ]);
 
     return {
       period,
@@ -107,6 +113,7 @@ export class AnalyticsService {
         profit: revenue - purchaseCost - returnsAmount,
         returns: { count: returnsAgg[0]?.count || 0, amount: returnsAmount },
         netRevenue: revenue - returnsAmount,
+        receivables: { amount: receivables[0]?.amount || 0, customers: receivables[0]?.customers || 0 },
       },
       inventory: {
         totalProducts: products.length,

@@ -151,7 +151,7 @@ export class UnitsService {
   }
 
   /** Vente d'un appareil scanné (vendeur) : crée la facture et met le stock à jour */
-  async sell(db: string, dto: SellUnitDto, actor: Actor) {
+  async sell(db: string, dto: SellUnitDto, actor: Actor, country?: string | null) {
     const serialNumber = normalizeSerial(dto.serialNumber);
     const unit = await this.getUnitModel(db).findOne({ serialNumber });
     if (!unit) throw new NotFoundException(`Le N° de série ${serialNumber} n'est pas enregistré en stock.`);
@@ -189,6 +189,7 @@ export class UnitsService {
         creditNoteCode: dto.creditNoteCode,
       },
       actor,
+      { country },
     );
 
     const soldUnit = await this.getUnitModel(db).findById(unit._id).populate('productId');
@@ -230,8 +231,8 @@ export class UnitsService {
   /** Supprimer une unité scannée par erreur (jamais vendue) */
   async remove(db: string, id: string) {
     const unitModel = this.getUnitModel(db);
-    const unit = await unitModel.findOneAndDelete({ _id: id, status: { $ne: UnitStatus.SOLD } });
-    if (!unit) throw new BadRequestException('Appareil introuvable ou déjà vendu : il ne peut pas être supprimé.');
+    const unit = await unitModel.findOneAndDelete({ _id: id, status: { $nin: [UnitStatus.SOLD, UnitStatus.IN_REPAIR] } });
+    if (!unit) throw new BadRequestException('Appareil introuvable, vendu ou à l\'atelier pour un client : il ne peut pas être supprimé.');
     if (unit.status === UnitStatus.IN_STOCK) {
       await this.getProductModel(db).updateOne({ _id: unit.productId }, { $inc: { stockQuantity: -1 } });
     }

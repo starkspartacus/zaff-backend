@@ -26,20 +26,20 @@ export class SalesController {
 
   @Get(':id')
   @ApiOperation({ summary: 'Détails d\'une vente avec retours' })
-  findOne(@CurrentTenant('databaseName') db: string, @Param('id') id: string) {
-    return this.salesService.findById(db, id);
+  findOne(@CurrentTenant('databaseName') db: string, @Param('id') id: string, @CurrentUser() user: any) {
+    return this.salesService.findById(db, id, { userId: user.userId, role: user.role });
   }
 
   @Post()
   @ApiOperation({ summary: 'Enregistrer une nouvelle vente (Achat ou Revendeur)' })
-  create(@CurrentTenant('databaseName') db: string, @CurrentUser() user: any, @Body() dto: CreateSaleDto) {
-    return this.salesService.create(db, dto, { userId: user.userId, name: user.name });
+  create(@CurrentTenant() tenant: any, @CurrentUser() user: any, @Body() dto: CreateSaleDto) {
+    return this.salesService.create(tenant.databaseName, dto, { userId: user.userId, name: user.name, role: user.role }, { country: tenant.countryCode });
   }
 
   @Post(':id/return')
   @Roles(Role.ADMIN)
   @ApiOperation({ summary: 'Enregistrer un retour et réintégrer le stock (propriétaire)' })
-  returnItems(@CurrentTenant('databaseName') db: string, @Param('id') id: string, @Body() dto: ReturnSaleDto) {
-    return this.salesService.returnItems(db, id, dto);
+  returnItems(@CurrentTenant('databaseName') db: string, @Param('id') id: string, @CurrentUser() user: any, @Body() dto: ReturnSaleDto) {
+    return this.salesService.returnItems(db, id, dto, { userId: user.userId, name: user.name, role: user.role });
   }
 }

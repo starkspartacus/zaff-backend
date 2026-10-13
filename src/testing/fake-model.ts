@@ -56,14 +56,17 @@ const REFS: Record<string, string> = { customerId: 'Customer', productId: 'Produ
 const query = (run: () => any, registry?: Record<string, FakeModel>, single = false) => {
   let sortSpec: Record<string, number> | null = null;
   const paths: string[] = [];
+  let isLean = false;
   const q: any = {
     sort: (s: Record<string, number>) => ((sortSpec = s), q),
     populate: (path: string) => (paths.push(path), q),
     limit: () => q,
     select: () => q,
-    lean: () => q,
+    // Comme MongoDB : un résultat « lean » est une copie figée au moment de la lecture
+    lean: () => ((isLean = true), q),
     exec: async () => {
       let res = run();
+      if (isLean && res) res = Array.isArray(res) ? res.map((d: any) => ({ ...d })) : { ...res };
       if (paths.length && registry && res) {
         const resolve = (d: any) => {
           if (!d) return d;

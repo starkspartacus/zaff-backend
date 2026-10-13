@@ -7,6 +7,7 @@ import { Actor } from '../sales/sales.service';
 import { CashClosing, CashClosingSchema, PaymentTotals } from './cash-closing.schema';
 import { CloseRegisterDto, ValidateClosingDto } from './dto/cash-closing.dto';
 import { ProductReturn, ProductReturnSchema } from '../returns/schemas/product-return.schema';
+import { CustomerPayment, CustomerPaymentSchema } from '../common/schemas/customer-payment.schema';
 
 const emptyTotals = (): PaymentTotals => ({ cash: 0, mobile: 0, card: 0, bank_transfer: 0, credit: 0 });
 
@@ -21,6 +22,7 @@ export class CashClosingsService {
 
   private getSaleModel(db: string) { return this.tenantConnectionService.getModel<Sale>(db, Sale.name, SaleSchema); }
   private getReturnModel(db: string) { return this.tenantConnectionService.getModel<ProductReturn>(db, ProductReturn.name, ProductReturnSchema); }
+  private getPaymentModel(db: string) { return this.tenantConnectionService.getModel<CustomerPayment>(db, CustomerPayment.name, CustomerPaymentSchema); }
   private getClosingModel(db: string) { return this.tenantConnectionService.getModel<CashClosing>(db, CashClosing.name, CashClosingSchema); }
 
   /** Totaux par mode de paiement d'un ensemble de ventes */
@@ -31,7 +33,8 @@ export class CashClosingsService {
         $group: {
           _id: '$paymentMethod',
           // La part payée avec un avoir n'est pas de l'argent encaissé
-          amount: { $sum: { $subtract: ['$total', { $ifNull: ['$creditNoteAmount', 0] }] } },
+          // À crédit : l'acompte est compté avec les paiements des clients (customer_payments)
+          amount: { $sum: { $subtract: [{ $subtract: ['$total', { $ifNull: ['$creditNoteAmount', 0] }] }, { $ifNull: ['$depositAmount', 0] }] } },
           count: { $sum: 1 },
           items: { $sum: { $size: '$items' } },
           first: { $min: '$saleDate' },
@@ -71,18 +74,51 @@ export class CashClosingsService {
     return refunds;
   }
 
-  /** Ventes − remboursements : ce que le collaborateur doit réellement remettre */
-  private async register(db: string, salesMatch: Record<string, unknown>, refundsMatch: Record<string, unknown>) {
-    const [s, refunds] = await Promise.all([this.summarize(db, salesMatch), this.summarizeRefunds(db, refundsMatch)]);
+  /** Paiements des clients à crédit encaissés (acomptes, versements ; remboursements de retours en négatif) */
+  private async summarizePayments(db: string, match: Record<string, unknown>) {
+    const rows = await this.getPaymentModel(db).aggregate([
+      { $match: match },
+      { $group: { _id: '$method', amount: { $sum: '$amount' }, count: { $sum: 1 }, first: { $min: '$createdAt' } } },
+    ]);
+    const byMethod: Partial<PaymentTotals> = {};
+    let amount = 0;
+    let count = 0;
+    let first: Date | null = null;
+    for (const r of rows) {
+      const key = (['cash', 'mobile', 'card', 'bank_transfer'].includes(r._id) ? r._id : 'cash') as keyof PaymentTotals;
+      byMethod[key] = (byMethod[key] || 0) + r.amount;
+      amount += r.amount;
+      count += r.count;
+      if (!first || r.first < first) first = r.first;
+    }
+    return { byMethod, amount, count, first };
+  }
+
+  /** Ventes + paiements reçus − remboursements : ce que le collaborateur doit réellement remettre */
+  private async register(db: string, salesMatch: Record<string, unknown>, refundsMatch: Record<string, unknown>, paymentsMatch: Record<string, unknown>) {
+    const [s, refunds, pay] = await Promise.all([
+      this.summarize(db, salesMatch),
+      this.summarizeRefunds(db, refundsMatch),
+      this.summarizePayments(db, paymentsMatch),
+    ]);
     const totals = { ...s.totals, cash: s.totals.cash - refunds.cash, mobile: s.totals.mobile - refunds.mobile };
-    return { ...s, totals, refunds, totalAmount: s.totalAmount - refunds.cash - refunds.mobile };
+    for (const [k, v] of Object.entries(pay.byMethod) as [keyof PaymentTotals, number][]) totals[k] += v;
+    const first = [s.first, pay.first].filter(Boolean).sort((a, b) => +a! - +b!)[0] || null;
+    return {
+      ...s,
+      first,
+      totals,
+      refunds,
+      collections: { amount: pay.amount, count: pay.count },
+      totalAmount: s.totalAmount - refunds.cash - refunds.mobile + pay.amount,
+    };
   }
 
   /** Caisse en cours du collaborateur : ventes pas encore clôturées */
   async current(db: string, sellerId: string) {
     const match = { sellerId: new Types.ObjectId(sellerId), closingId: null };
     const [summary, sales, lastClosing] = await Promise.all([
-      this.register(db, match, { processedBy: new Types.ObjectId(sellerId), closingId: null }),
+      this.register(db, match, { processedBy: new Types.ObjectId(sellerId), closingId: null }, { collectedBy: new Types.ObjectId(sellerId), closingId: null }),
       this.getSaleModel(db)
         .find(match, { invoiceNumber: 1, total: 1, paymentMethod: 1, saleDate: 1, 'items.productName': 1, 'items.serialNumber': 1 })
         .sort({ saleDate: -1 })
@@ -120,12 +156,16 @@ export class CashClosingsService {
       { processedBy: sellerId, closingId: null, action: 'refund', createdAt: { $lte: closedAt } },
       { $set: { closingId } },
     );
-    if (!claimed.modifiedCount && !claimedRefunds.modifiedCount) {
-      throw new BadRequestException('Aucune vente à clôturer depuis votre dernière clôture.');
+    const claimedPayments = await this.getPaymentModel(db).updateMany(
+      { collectedBy: sellerId, closingId: null, createdAt: { $lte: closedAt } },
+      { $set: { closingId } },
+    );
+    if (!claimed.modifiedCount && !claimedRefunds.modifiedCount && !claimedPayments.modifiedCount) {
+      throw new BadRequestException('Rien à clôturer depuis votre dernière clôture (aucune vente ni encaissement).');
     }
 
     try {
-      const s = await this.register(db, { closingId }, { closingId });
+      const s = await this.register(db, { closingId }, { closingId }, { closingId });
       const declaredCash = Math.round(dto.declaredCash);
       const closing = await closingModel.create({
         _id: closingId,
@@ -138,6 +178,7 @@ export class CashClosingsService {
         totals: s.totals,
         totalAmount: s.totalAmount,
         refunds: s.refunds,
+        collections: s.collections,
         expectedCash: s.totals.cash,
         declaredCash,
         cashDifference: declaredCash - s.totals.cash,
@@ -151,6 +192,7 @@ export class CashClosingsService {
       // Échec après la réservation : les ventes redeviennent « à clôturer »
       await saleModel.updateMany({ closingId }, { $set: { closingId: null } }).catch(() => undefined);
       await this.getReturnModel(db).updateMany({ closingId }, { $set: { closingId: null } }).catch(() => undefined);
+      await this.getPaymentModel(db).updateMany({ closingId }, { $set: { closingId: null } }).catch(() => undefined);
       throw e;
     }
   }
@@ -194,7 +236,7 @@ export class CashClosingsService {
         $group: {
           _id: { seller: '$sellerId', method: '$paymentMethod' },
           sellerName: { $first: '$sellerName' },
-          amount: { $sum: { $subtract: ['$total', { $ifNull: ['$creditNoteAmount', 0] }] } },
+          amount: { $sum: { $subtract: [{ $subtract: ['$total', { $ifNull: ['$creditNoteAmount', 0] }] }, { $ifNull: ['$depositAmount', 0] }] } },
           count: { $sum: 1 },
           first: { $min: '$saleDate' },
           last: { $max: '$saleDate' },
@@ -223,6 +265,18 @@ export class CashClosingsService {
       const key = r._id.method === 'mobile' ? 'mobile' : 'cash';
       e.totals[key] -= r.amount;
       e.totalAmount -= r.amount;
+      bySeller.set(id, e);
+    }
+    const payments = await this.getPaymentModel(db).aggregate([
+      { $match: { closingId: null, collectedBy: { $ne: null } } },
+      { $group: { _id: { seller: '$collectedBy', method: '$method' }, sellerName: { $first: '$collectedByName' }, amount: { $sum: '$amount' }, first: { $min: '$createdAt' } } },
+    ]);
+    for (const r of payments) {
+      const id = String(r._id.seller);
+      const e = bySeller.get(id) || { sellerId: id, sellerName: r.sellerName, totals: emptyTotals(), totalAmount: 0, salesCount: 0, since: r.first, lastSaleAt: r.first };
+      const key = (['cash', 'mobile', 'card', 'bank_transfer'].includes(r._id.method) ? r._id.method : 'cash') as keyof PaymentTotals;
+      e.totals[key] += r.amount;
+      e.totalAmount += r.amount;
       bySeller.set(id, e);
     }
     return [...bySeller.values()].sort((a, b) => b.totalAmount - a.totalAmount);

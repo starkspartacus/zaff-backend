@@ -16,6 +16,7 @@ const PUSH_URL: Record<string, string> = {
   'return.created': '/app/returns',
   'repair.ready': '/app/repairs',
   'catalog.photo': '/app/catalog',
+  'customer.payment': '/app/customers',
 };
 
 export interface NotifyInput {

@@ -93,6 +93,27 @@ export class Sale {
   @Prop({ default: 0 })
   creditNoteAmount: number;
 
+  /**
+   * Vente à crédit (revendeur, client connu) : acompte versé à la vente et reste à payer.
+   * Le reste diminue à chaque encaissement (`customer_payments`) ou retour de marchandise.
+   */
+  @Prop({ default: 0 })
+  depositAmount: number;
+
+  @Prop({ default: null })
+  depositMethod: string;
+
+  @Prop({ default: 0, index: true })
+  amountDue: number;
+
+  /** paid | partial | unpaid */
+  @Prop({ default: 'paid', index: true })
+  paymentStatus: string;
+
+  /** Valeur des articles retournés (retours de lots revendeur) */
+  @Prop({ default: 0 })
+  returnedAmount: number;
+
   /** Clôture de caisse qui inclut cette vente (null = pas encore clôturée) */
   @Prop({ type: Types.ObjectId, default: null, index: true })
   closingId: Types.ObjectId;

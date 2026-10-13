@@ -62,7 +62,7 @@ describe('Clôture de caisse', () => {
   it('ne compte jamais une vente deux fois et refuse une clôture vide', async () => {
     await service.close(DB, awa, { declaredCash: 865000 });
     await expect(service.close(DB, awa, { declaredCash: 0 })).rejects.toBeInstanceOf(BadRequestException);
-    await expect(service.close(DB, awa, { declaredCash: 0 })).rejects.toThrow('Aucune vente à clôturer');
+    await expect(service.close(DB, awa, { declaredCash: 0 })).rejects.toThrow('Rien à clôturer');
 
     // Une nouvelle vente après la clôture part dans la clôture suivante
     await sale(awa, 5000, 'cash', 0);

@@ -34,6 +34,10 @@ export class Customer {
 
   @Prop({ default: false, index: true })
   isReseller: boolean;
+
+  /** Reste à payer (ventes à crédit non soldées) */
+  @Prop({ default: 0 })
+  balance: number;
 }
 
 export const CustomerSchema = SchemaFactory.createForClass(Customer);

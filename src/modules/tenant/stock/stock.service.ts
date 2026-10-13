@@ -34,7 +34,7 @@ export class StockService {
     return movModel.find().populate('productId').sort({ createdAt: -1 }).limit(limit).exec();
   }
 
-  async createMovement(db: string, dto: CreateStockMovementDto) {
+  async createMovement(db: string, dto: CreateStockMovementDto, actor?: { name: string }) {
     const prodModel = this.getProductModel(db);
     const movModel = this.getStockMovementModel(db);
 
@@ -46,30 +46,39 @@ export class StockService {
       );
     }
 
-    let stockChange = 0;
+    // Mise à jour atomique : une vente faite au même moment n'est jamais écrasée
+    let updated: any;
+    let moved = dto.quantity;
     if (dto.movementType === StockMovementType.IN) {
-      stockChange = dto.quantity;
+      if (dto.quantity < 1) throw new BadRequestException('Indiquez une quantité d\'au moins 1.');
+      updated = await prodModel.findOneAndUpdate({ _id: product._id }, { $inc: { stockQuantity: dto.quantity } }, { new: true });
     } else if (dto.movementType === StockMovementType.OUT) {
-      if (product.stockQuantity < dto.quantity) {
-        throw new BadRequestException(`Stock insuffisant (Disponible: ${product.stockQuantity}).`);
+      if (dto.quantity < 1) throw new BadRequestException('Indiquez une quantité d\'au moins 1.');
+      updated = await prodModel.findOneAndUpdate(
+        { _id: product._id, stockQuantity: { $gte: dto.quantity } },
+        { $inc: { stockQuantity: -dto.quantity } },
+        { new: true },
+      );
+      if (!updated) {
+        const fresh = await prodModel.findById(product._id);
+        throw new BadRequestException(`Stock insuffisant (disponible : ${fresh?.stockQuantity ?? 0}).`);
       }
-      stockChange = -dto.quantity;
-    } else if (dto.movementType === StockMovementType.ADJUSTMENT) {
-      stockChange = dto.quantity - product.stockQuantity;
+    } else {
+      // Ajustement : le stock compté devient le stock
+      const before = product.stockQuantity;
+      updated = await prodModel.findOneAndUpdate({ _id: product._id }, { $set: { stockQuantity: dto.quantity } }, { new: true });
+      moved = Math.abs(dto.quantity - before);
     }
-
-    product.stockQuantity += stockChange;
-    await product.save();
 
     const movement = await movModel.create({
       productId: new Types.ObjectId(dto.productId),
       movementType: dto.movementType,
-      quantity: Math.abs(dto.quantity),
+      quantity: moved,
       referenceType: dto.referenceType,
       referenceId: dto.referenceId || null,
-      notes: dto.notes || null,
+      notes: [dto.notes, actor && `par ${actor.name}`].filter(Boolean).join(' — ') || null,
     });
 
-    return { movement, currentStock: product.stockQuantity };
+    return { movement, currentStock: updated?.stockQuantity ?? product.stockQuantity };
   }
 }

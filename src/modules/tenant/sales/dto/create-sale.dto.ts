@@ -1,4 +1,4 @@
-import { IsString, IsNotEmpty, IsNumber, IsOptional, IsEnum, IsArray, ValidateNested, IsBoolean } from 'class-validator';
+import { IsString, IsNotEmpty, IsNumber, IsOptional, IsEnum, IsArray, ValidateNested, IsBoolean, IsInt, Min, Max, ArrayNotEmpty, ArrayMaxSize, IsIn } from 'class-validator';
 import { Type } from 'class-transformer';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PaymentMethod } from '../../../../common/enums/payment-method.enum';
@@ -26,16 +26,23 @@ export class CreateSaleItemDto {
   productCategory?: string;
 
   @ApiProperty({ example: 1 })
-  @IsNumber()
+  @Type(() => Number)
+  @IsInt({ message: 'La quantité doit être un nombre entier.' })
+  @Min(1, { message: 'La quantité doit être au moins 1.' })
+  @Max(10000)
   quantity: number;
 
-  @ApiProperty({ example: 750000 })
+  @ApiPropertyOptional({ example: 750000, description: 'Prix unitaire (par défaut : prix du catalogue, revendeur si vente revendeur)' })
+  @Type(() => Number)
   @IsNumber()
-  unitPrice: number;
+  @Min(0, { message: 'Le prix ne peut pas être négatif.' })
+  @IsOptional()
+  unitPrice?: number;
 
-  @ApiProperty({ example: 750000 })
+  @ApiPropertyOptional({ description: 'Ignoré : recalculé par le serveur (prix × quantité)' })
   @IsNumber()
-  total: number;
+  @IsOptional()
+  total?: number;
 
   @ApiPropertyOptional({ default: false })
   @IsBoolean()
@@ -43,7 +50,10 @@ export class CreateSaleItemDto {
   warrantyEnabled?: boolean;
 
   @ApiPropertyOptional({ default: 0 })
-  @IsNumber()
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(120)
   @IsOptional()
   warrantyMonths?: number;
 
@@ -71,27 +81,47 @@ export class CreateSaleDto {
 
   @ApiProperty({ type: [CreateSaleItemDto] })
   @IsArray()
+  @ArrayNotEmpty({ message: 'Le panier est vide.' })
+  @ArrayMaxSize(500)
   @ValidateNested({ each: true })
   @Type(() => CreateSaleItemDto)
   items: CreateSaleItemDto[];
 
-  @ApiProperty({ example: 750000 })
+  @ApiPropertyOptional({ description: 'Ignoré : recalculé par le serveur' })
   @IsNumber()
-  subtotal: number;
+  @IsOptional()
+  subtotal?: number;
 
-  @ApiPropertyOptional({ example: 0 })
+  @ApiPropertyOptional({ example: 0, description: 'Remise en montant sur le total' })
+  @Type(() => Number)
   @IsNumber()
+  @Min(0, { message: 'La remise ne peut pas être négative.' })
   @IsOptional()
   discount?: number;
 
-  @ApiProperty({ example: 750000 })
-  @IsNumber()
-  total: number;
-
-  @ApiPropertyOptional({ example: 800000, description: 'Montant remis par le client' })
+  @ApiPropertyOptional({ description: 'Ignoré : recalculé par le serveur (sous-total − remise)' })
   @IsNumber()
   @IsOptional()
+  total?: number;
+
+  @ApiPropertyOptional({ example: 800000, description: 'Montant remis par le client (pour rendre la monnaie)' })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
   paidAmount?: number;
+
+  @ApiPropertyOptional({ example: 100000, description: 'Vente à crédit : acompte versé maintenant' })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0, { message: "L'acompte ne peut pas être négatif." })
+  @IsOptional()
+  depositAmount?: number;
+
+  @ApiPropertyOptional({ enum: ['cash', 'mobile', 'card', 'bank_transfer'], default: 'cash' })
+  @IsIn(['cash', 'mobile', 'card', 'bank_transfer'])
+  @IsOptional()
+  depositMethod?: string;
 
   @ApiProperty({ enum: PaymentMethod, default: PaymentMethod.CASH })
   @IsEnum(PaymentMethod)
@@ -112,13 +142,39 @@ export class CreateSaleDto {
   creditNoteCode?: string;
 }
 
+export class ReturnSaleItemDto {
+  @ApiProperty()
+  @IsString()
+  @IsNotEmpty()
+  productId: string;
+
+  @ApiProperty({ example: 1 })
+  @Type(() => Number)
+  @IsInt({ message: 'La quantité doit être un nombre entier.' })
+  @Min(1, { message: 'La quantité doit être au moins 1.' })
+  quantity: number;
+
+  @ApiPropertyOptional({ description: 'Obligatoire pour un appareil suivi par N° de série' })
+  @IsString()
+  @IsOptional()
+  serialNumber?: string;
+}
+
 export class ReturnSaleDto {
-  @ApiProperty({ example: 'Client n\'a pas vendu le lot' })
+  @ApiPropertyOptional({ example: "Le revendeur n'a pas vendu le lot" })
   @IsString()
   @IsOptional()
   reason?: string;
 
-  @ApiProperty({ example: [{ productId: '64e...', quantity: 1, serialNumber: 'IMEI...' }] })
+  @ApiProperty({ type: [ReturnSaleItemDto] })
   @IsArray()
-  items: Array<{ productId: string; quantity: number; serialNumber?: string }>;
+  @ArrayNotEmpty({ message: 'Choisissez au moins un article à retourner.' })
+  @ValidateNested({ each: true })
+  @Type(() => ReturnSaleItemDto)
+  items: ReturnSaleItemDto[];
+
+  @ApiPropertyOptional({ enum: ['cash', 'mobile'], description: "Remboursement de la part déjà payée (si elle dépasse le reste à payer)" })
+  @IsIn(['cash', 'mobile', 'none'])
+  @IsOptional()
+  refundMethod?: 'cash' | 'mobile' | 'none';
 }
