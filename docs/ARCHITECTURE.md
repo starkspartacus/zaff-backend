@@ -248,6 +248,7 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   proposée **à cette boutique seulement** (`search(q, tenantId)`, en premier), `attach` refuse la photo privée d'une autre
   boutique ; en attente jusqu'à l'enregistrement du produit, effacée si plus utilisée (même cycle de vie). Vrai type vérifié
   par les premiers octets (JPEG / PNG / WebP, pas de SVG), 600 Ko max, une même photo stockée une fois.
+  Si la fiche ne peut pas être créée après l'envoi, le fichier UploadThing est supprimé.
 - **Studio photo des boutiques** `POST /global/images/shop/prepare` (propriétaire, magasinier ; multipart `file` ≤ 8 Mo +
   `brand`, `model`, `color`) — `PhotoStudioService`, **rien n'est stocké** : le résultat (WebP base64 + vignette, `steps`,
   `tips`, `ai`) revient à l'écran, la boutique le valide, puis l'envoie avec `/shop` à l'enregistrement du produit. Étapes :
@@ -258,7 +259,6 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   fond blanc si la photo l'est, sinon **fond uni assorti** au pourtour (éclairci) et bords de la photo fondus (aucun cadre) ;
   WebP ≤ 1000 px (≤ 550 Ko) + vignette 320. Conseils : photo floue (`stats().sharpness` < 0,6), très sombre, et selon l'IA :
   main, boîte, reflets, fond chargé, appareil coupé, photo d'écran, plusieurs appareils, autre modèle que prévu.
-  Si la fiche ne peut pas être créée après l'envoi, le fichier UploadThing est supprimé.
 - **Cycle de vie (aucune photo orpheline)** :
   - photos d'appareil envoyées par l'admin avec `library: true` + `deviceId` (gardées même sans produit) ; retirer une photo
     d'un appareil l'efface, ou la masque seulement si des produits l'utilisent encore (`adminRemove`) ;
