@@ -7,7 +7,7 @@ import { AiImageCandidate, AiImageCandidateSchema, AiImageJob, AiImageJobSchema 
 import { AiImagesController } from './ai-images.controller';
 import { AiImagesService, PAGE_FETCHER } from './ai-images.service';
 import { safeFetch } from './safe-fetch';
-import { AI_CLIENT, GeminiClient } from './gemini.client';
+import { AiCoreModule } from './ai-core.module';
 
 @Module({
   imports: [
@@ -19,8 +19,9 @@ import { AI_CLIENT, GeminiClient } from './gemini.client';
       GLOBAL_CONNECTION,
     ),
     DevicesModule,
+    AiCoreModule,
   ],
   controllers: [AiImagesController],
-  providers: [AiImagesService, PlatformAdminGuard, { provide: AI_CLIENT, useClass: GeminiClient }, { provide: PAGE_FETCHER, useValue: safeFetch }],
+  providers: [AiImagesService, PlatformAdminGuard, { provide: PAGE_FETCHER, useValue: safeFetch }],
 })
 export class AiImagesModule {}

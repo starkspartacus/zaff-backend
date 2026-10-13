@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Post, Query, Res, UploadedFiles, UseGuards, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, HttpCode, Param, Post, Query, Res, UploadedFiles, UseGuards, UseInterceptors } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
 import { ApiBearerAuth, ApiConsumes, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
@@ -11,12 +11,20 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { EstablishmentsService } from '../establishments/establishments.service';
 import { ImagesService, MAX_IMAGE_BYTES } from './images.service';
 import { PlatformAdminGuard } from '../platform/platform.guard';
+import { PhotoStudioService } from './photo-studio.service';
+import { ImageRejected } from '../ai-images/image-normalize';
 
 class ImageQueryDto {
   @IsOptional() @IsString() @MaxLength(80) brand?: string;
   @IsOptional() @IsString() @MaxLength(120) model?: string;
   @IsOptional() @IsString() @MaxLength(60) color?: string;
   @IsOptional() @IsString() @MaxLength(60) category?: string;
+}
+
+class StudioDto {
+  @IsOptional() @IsString() @MaxLength(80) brand?: string;
+  @IsOptional() @IsString() @MaxLength(120) model?: string;
+  @IsOptional() @IsString() @MaxLength(60) color?: string;
 }
 
 class ImageUploadDto {
@@ -34,6 +42,7 @@ export class ImagesController {
   constructor(
     private readonly images: ImagesService,
     private readonly establishments: EstablishmentsService,
+    private readonly studio: PhotoStudioService,
   ) {}
 
   @Get()
@@ -104,6 +113,45 @@ export class ImagesController {
     @CurrentUser() user: any,
   ) {
     return this.images.upload(files?.file?.[0], dto, { establishmentId: null, establishmentName: 'ZAFF', name: user?.name }, { library: true, thumb: files?.thumb?.[0] });
+  }
+
+  /**
+   * Studio photo : la photo prise au téléphone est recadrée sur l'appareil (IA si disponible), éclaircie, mise au format
+   * du catalogue. Rien n'est stocké : le résultat revient à l'écran, la boutique le valide, puis l'envoie avec `shop`.
+   */
+  @Post('shop/prepare')
+  @HttpCode(200)
+  @ApiBearerAuth()
+  @ApiConsumes('multipart/form-data')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(Role.ADMIN, Role.STOREKEEPER)
+  @UseInterceptors(FileFieldsInterceptor([{ name: 'file', maxCount: 1 }], { limits: { fileSize: 8 * 1024 * 1024, files: 1 } }))
+  @ApiOperation({ summary: 'Optimiser la photo de mon produit (recadrage IA, lumière, format) avant de l\'enregistrer' })
+  async prepareShop(
+    @UploadedFiles() files: { file?: { buffer: Buffer; size: number }[] } | undefined,
+    @Body() dto: StudioDto,
+    @CurrentUser() user: any,
+  ) {
+    const file = files?.file?.[0];
+    if (!file?.buffer?.length) throw new BadRequestException('Aucune photo reçue.');
+    try {
+      const r = await this.studio.enhance(file.buffer, dto, String(user?.tenantId || 'shop'));
+      return {
+        full: r.full.toString('base64'),
+        thumb: r.thumb.toString('base64'),
+        mime: 'image/webp',
+        width: r.width,
+        height: r.height,
+        bytes: r.full.length,
+        steps: r.steps,
+        tips: r.tips,
+        ai: r.ai,
+        background: r.background,
+      };
+    } catch (e) {
+      if (e instanceof ImageRejected) throw new BadRequestException(e.message);
+      throw e;
+    }
   }
 
   /**

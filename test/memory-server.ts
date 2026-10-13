@@ -51,6 +51,10 @@ const demoAi = {
     if (req.search) {
       return { text: JSON.stringify({ images: demoColors.map((_, i) => ({ url: `https://demo.zaff.app/${slug}-${i}.png`, page: 'https://demo.zaff.app/' + slug, color: ['Noir', 'Bleu', 'Violet'][i] })) }), sources: [] };
     }
+    // Studio photo (démo) : l'appareil est supposé occuper presque toute la photo
+    if (prompt.includes('PHOTO STUDIO')) {
+      return { text: JSON.stringify({ found: true, box: [60, 60, 940, 940], matches: true, device: name, issues: [] }), sources: [] };
+    }
     if (prompt.includes('Devices:')) {
       const ids = [...prompt.matchAll(/id ([a-f0-9]{24})/g)].map((m) => m[1]);
       return { text: JSON.stringify({ devices: ids.map((id) => ({ id, known: true, colors: [{ name: 'Noir minuit', hex: '#1f2937' }, { name: 'Bleu glacier', hex: '#93c5fd' }, { name: 'Lavande', hex: '#c4b5fd' }], variants: ['128 Go', '256 Go'], specs: [{ label: 'Écran', value: '6,7" AMOLED 120 Hz' }, { label: 'Batterie', value: '5000 mAh' }] })) }), sources: [] };

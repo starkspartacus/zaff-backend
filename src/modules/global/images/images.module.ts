@@ -8,12 +8,15 @@ import { ImagesService } from './images.service';
 import { PlatformAdminGuard } from '../platform/platform.guard';
 import { ConfigService } from '@nestjs/config';
 import { DatabaseStorage, MEDIA_STORAGE, UploadThingStorage } from './media-storage';
+import { AiCoreModule } from '../ai-images/ai-core.module';
+import { PhotoStudioService } from './photo-studio.service';
 
 @Module({
-  imports: [MongooseModule.forFeature([{ name: CatalogImage.name, schema: CatalogImageSchema }], GLOBAL_CONNECTION), EstablishmentsModule],
+  imports: [MongooseModule.forFeature([{ name: CatalogImage.name, schema: CatalogImageSchema }], GLOBAL_CONNECTION), EstablishmentsModule, AiCoreModule],
   controllers: [ImagesController],
   providers: [
     ImagesService,
+    PhotoStudioService,
     PlatformAdminGuard,
     {
       // UploadThing si UPLOADTHING_TOKEN est défini, sinon MongoDB
