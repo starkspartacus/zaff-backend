@@ -47,6 +47,16 @@ export class ProductUnit {
 
   @Prop({ default: null })
   notes: string;
+
+  // Dépôt chez un revendeur (statut « consigned ») : à qui, depuis quand, sur quel bon
+  @Prop({ type: Types.ObjectId, default: null, index: true })
+  consignmentId: Types.ObjectId;
+
+  @Prop({ default: null })
+  consignedToName: string;
+
+  @Prop({ default: null })
+  consignedAt: Date;
 }
 
 export const ProductUnitSchema = SchemaFactory.createForClass(ProductUnit);

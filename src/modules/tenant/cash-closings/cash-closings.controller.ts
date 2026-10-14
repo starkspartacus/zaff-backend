@@ -10,6 +10,9 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 import { CashClosingsService } from './cash-closings.service';
 import { CloseRegisterDto, ValidateClosingDto } from './dto/cash-closing.dto';
 
+/** Informations de la boutique utiles au rapport */
+const shopOf = (t: any) => ({ name: t?.name, currency: t?.currency, email: t?.email, phone: t?.phone });
+
 @ApiTags('Tenant - Cash closings (clôtures de caisse)')
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, TenantGuard, RolesGuard)
@@ -26,8 +29,14 @@ export class CashClosingsController {
 
   @Post()
   @ApiOperation({ summary: 'Clôturer ma caisse (espèces comptées)' })
-  close(@CurrentTenant('databaseName') db: string, @CurrentUser() user: any, @Body() dto: CloseRegisterDto) {
-    return this.service.close(db, { userId: user.userId, name: user.name }, dto);
+  close(@CurrentTenant() tenant: any, @CurrentUser() user: any, @Body() dto: CloseRegisterDto) {
+    return this.service.close(tenant.databaseName, { userId: user.userId, name: user.name }, dto, shopOf(tenant));
+  }
+
+  @Get(':id/report')
+  @ApiOperation({ summary: 'Rapport de la clôture (texte WhatsApp + HTML), envoyé aussi par e-mail au patron' })
+  report(@CurrentTenant() tenant: any, @CurrentUser() user: any, @Param('id') id: string) {
+    return this.service.report(tenant.databaseName, id, { userId: user.userId, role: user.role }, shopOf(tenant));
   }
 
   @Get()

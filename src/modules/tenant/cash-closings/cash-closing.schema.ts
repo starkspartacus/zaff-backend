@@ -50,6 +50,13 @@ export class CashClosing {
   @Prop({ type: Object, default: { amount: 0, count: 0 } })
   collections: { amount: number; count: number };
 
+  /** Rapport envoyé par e-mail au patron (adresses) */
+  @Prop({ type: [String], default: [] })
+  emailedTo: string[];
+
+  @Prop({ default: null })
+  emailedAt: Date;
+
   /** Espèces attendues (= totals.cash) et comptées par le vendeur */
   @Prop({ default: 0 })
   expectedCash: number;

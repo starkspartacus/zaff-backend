@@ -11,6 +11,8 @@ import { SaleType } from '../../../common/enums/sale-type.enum';
 import { Actor, SalesService, normalizeSerial } from '../sales/sales.service';
 import { AddUnitsDto, SellUnitDto, UpdateUnitStatusDto } from './dto/units.dto';
 import { NotificationsService } from '../notifications/notifications.service';
+import { Consignment, ConsignmentSchema } from '../consignments/consignment.schema';
+import { daysSince } from '../consignments/consignments.service';
 
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -48,7 +50,13 @@ export class UnitsService {
     const code = rawCode.trim();
     const unit = await this.getUnitModel(db).findOne({ serialNumber: normalizeSerial(code) }).populate('productId').exec();
     if (unit) {
-      return { type: 'unit' as const, unit, product: unit.productId, sellable: unit.status === UnitStatus.IN_STOCK };
+      // Chez un revendeur : qui, depuis quand, sur quel bon (le vendeur clôture la remise au lieu de vendre)
+      let consignment: { id: string; code: string; customerName: string; daysOut: number; dueAt: Date; overdue: boolean } | null = null;
+      if (unit.status === UnitStatus.CONSIGNED && unit.consignmentId) {
+        const c: any = await this.tenantConnectionService.getModel<Consignment>(db, Consignment.name, ConsignmentSchema).findById(unit.consignmentId).lean().exec();
+        if (c) consignment = { id: String(c._id), code: c.code, customerName: c.customerName, daysOut: daysSince(c.createdAt), dueAt: c.dueAt, overdue: new Date(c.dueAt).getTime() < Date.now() };
+      }
+      return { type: 'unit' as const, unit, product: unit.productId, sellable: unit.status === UnitStatus.IN_STOCK, consignment };
     }
     const product = await this.getProductModel(db).findOne({ barcode: code }).exec();
     if (product) {
@@ -202,6 +210,9 @@ export class UnitsService {
     const unit = await unitModel.findById(id);
     if (!unit) throw new NotFoundException('Appareil non trouvé.');
     if (unit.status === UnitStatus.SOLD) throw new BadRequestException('Un appareil vendu ne peut pas changer de statut (passez par un retour).');
+    if (unit.status === UnitStatus.CONSIGNED) {
+      throw new BadRequestException(`Cet appareil est chez le revendeur ${unit.consignedToName || ''} : enregistrez son retour dans « Revendeurs ».`.replace('  ', ' '));
+    }
     if (unit.status === UnitStatus.IN_REPAIR) {
       throw new BadRequestException("Cet appareil est à l'atelier pour un client : il sera rendu au client après réparation.");
     }
@@ -231,8 +242,8 @@ export class UnitsService {
   /** Supprimer une unité scannée par erreur (jamais vendue) */
   async remove(db: string, id: string) {
     const unitModel = this.getUnitModel(db);
-    const unit = await unitModel.findOneAndDelete({ _id: id, status: { $nin: [UnitStatus.SOLD, UnitStatus.IN_REPAIR] } });
-    if (!unit) throw new BadRequestException('Appareil introuvable, vendu ou à l\'atelier pour un client : il ne peut pas être supprimé.');
+    const unit = await unitModel.findOneAndDelete({ _id: id, status: { $nin: [UnitStatus.SOLD, UnitStatus.IN_REPAIR, UnitStatus.CONSIGNED] } });
+    if (!unit) throw new BadRequestException('Appareil introuvable, vendu, chez un revendeur ou à l\'atelier pour un client : il ne peut pas être supprimé.');
     if (unit.status === UnitStatus.IN_STOCK) {
       await this.getProductModel(db).updateOne({ _id: unit.productId }, { $inc: { stockQuantity: -1 } });
     }

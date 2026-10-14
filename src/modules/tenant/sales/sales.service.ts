@@ -114,7 +114,9 @@ export class SalesService {
     return { sale, returns };
   }
 
-  async create(db: string, dto: CreateSaleDto, seller?: Actor, opts: { country?: string | null } = {}) {
+  async create(db: string, dto: CreateSaleDto, seller?: Actor, opts: { country?: string | null; consignedSerials?: Set<string> } = {}) {
+    // Appareils vendus par un revendeur (dépôt) : réservés depuis « chez le revendeur », stock déjà sorti à la remise
+    const consigned = opts.consignedSerials || new Set<string>();
     const saleModel = this.getSaleModel(db);
     const prodModel = this.getProductModel(db);
     const unitModel = this.getUnitModel(db);
@@ -207,8 +209,9 @@ export class SalesService {
         const product = products.get(item.productId);
 
         if (product.hasSerialNumbers) {
+          const fromConsignment = consigned.has(item.serialNumber!);
           const unit = await unitModel.findOneAndUpdate(
-            { serialNumber: item.serialNumber, productId: product._id, status: UnitStatus.IN_STOCK },
+            { serialNumber: item.serialNumber, productId: product._id, status: fromConsignment ? UnitStatus.CONSIGNED : UnitStatus.IN_STOCK },
             {
               status: UnitStatus.SOLD,
               soldPrice: item.unitPrice,
@@ -219,7 +222,8 @@ export class SalesService {
             { new: true },
           );
           if (!unit) throw new BadRequestException(await this.describeUnavailable(db, item.serialNumber!, product));
-          rollback.push(() => unitModel.updateOne({ _id: unit._id }, SOLD_FIELDS_RESET));
+          rollback.push(() => unitModel.updateOne({ _id: unit._id }, { ...SOLD_FIELDS_RESET, status: fromConsignment ? UnitStatus.CONSIGNED : UnitStatus.IN_STOCK }));
+          if (fromConsignment) continue; // stock déjà sorti à la remise au revendeur
         }
 
         const updated = await prodModel.findOneAndUpdate(
@@ -423,6 +427,9 @@ export class SalesService {
     if (!unit) return `Le N° de série ${serial} n'est pas enregistré en stock.`;
     if (String(unit.productId) !== String(product._id)) {
       return `Le N° de série ${serial} correspond à un autre produit que '${product.name}'.`;
+    }
+    if (unit.status === UnitStatus.CONSIGNED) {
+      return `L'appareil ${serial} est chez le revendeur ${unit.consignedToName || ''} : enregistrez sa vente ou son retour dans « Revendeurs ».`.replace('  ', ' ');
     }
     if (unit.status === UnitStatus.SOLD) {
       return `L'appareil ${serial} a déjà été vendu${unit.invoiceNumber ? ` (facture #${unit.invoiceNumber})` : ''}.`;

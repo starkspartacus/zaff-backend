@@ -18,6 +18,13 @@ export default () => {
       email: env.PLATFORM_ADMIN_EMAIL,
       password: env.PLATFORM_ADMIN_PASSWORD,
     },
+    mail: {
+      host: env.SMTP_HOST,
+      port: env.SMTP_PORT,
+      user: env.SMTP_USER,
+      pass: env.SMTP_PASS,
+      from: env.MAIL_FROM,
+    },
     media: {
       uploadthingToken: env.UPLOADTHING_TOKEN,
     },

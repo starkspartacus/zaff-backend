@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, NotFoundException, Optional } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { TenantConnectionService } from '../../../database/tenant-connection.service';
 import { Sale, SaleSchema } from '../common/schemas/sale.schema';
@@ -8,6 +8,21 @@ import { CashClosing, CashClosingSchema, PaymentTotals } from './cash-closing.sc
 import { CloseRegisterDto, ValidateClosingDto } from './dto/cash-closing.dto';
 import { ProductReturn, ProductReturnSchema } from '../returns/schemas/product-return.schema';
 import { CustomerPayment, CustomerPaymentSchema } from '../common/schemas/customer-payment.schema';
+import { TenantUser, TenantUserSchema } from '../common/schemas/tenant-user.schema';
+import { Consignment, ConsignmentSchema } from '../consignments/consignment.schema';
+import { MailService } from '../../mail/mail.service';
+import { buildClosingReport } from './closing-report';
+
+/** Boutique (pour le rapport) : nom, devise, e-mail, téléphone */
+export interface ShopInfo {
+  name?: string;
+  currency?: string;
+  email?: string | null;
+  phone?: string | null;
+}
+
+/** Référence lisible d'une clôture (« CL-3F9A2C ») */
+export const closingCode = (id: unknown) => `CL-${String(id).slice(-6).toUpperCase()}`;
 
 const emptyTotals = (): PaymentTotals => ({ cash: 0, mobile: 0, card: 0, bank_transfer: 0, credit: 0 });
 
@@ -15,10 +30,60 @@ const fmt = (n: number) => `${Math.round(n).toLocaleString('fr-FR')} F`;
 
 @Injectable()
 export class CashClosingsService {
+  private readonly logger = new Logger(CashClosingsService.name);
+
   constructor(
     private readonly tenantConnectionService: TenantConnectionService,
     private readonly notifications: NotificationsService,
+    @Optional() private readonly mail?: MailService,
   ) {}
+
+  private getUserModel(db: string) { return this.tenantConnectionService.getModel<TenantUser>(db, TenantUser.name, TenantUserSchema); }
+  private getConsignmentModel(db: string) { return this.tenantConnectionService.getModel<Consignment>(db, Consignment.name, ConsignmentSchema); }
+
+  /** Adresses du patron : propriétaires avec un e-mail, sinon l'e-mail de la boutique */
+  private async ownerContacts(db: string, shop: ShopInfo) {
+    const owners = await this.getUserModel(db).find({ role: 'admin' }).lean().exec();
+    const emails = [...new Set([...owners.map((o: any) => o.email).filter(Boolean), shop.email].filter(Boolean) as string[])];
+    const phone = (owners.find((o: any) => o.phone) as any)?.phone || shop.phone || null;
+    return { emails, phone };
+  }
+
+  /** Rapport d'une clôture : texte (WhatsApp), HTML (e-mail), téléphone du patron. Un vendeur ne lit que les siens */
+  async report(db: string, id: string, viewer: { userId: string; role?: string }, shop: ShopInfo = {}) {
+    if (!Types.ObjectId.isValid(id)) throw new NotFoundException('Clôture introuvable.');
+    const closing: any = await this.getClosingModel(db).findById(id).lean().exec();
+    if (!closing || (viewer.role === 'seller' && String(closing.sellerId) !== String(viewer.userId))) throw new NotFoundException('Clôture introuvable.');
+    const sales = await this.getSaleModel(db).find({ closingId: closing._id }).sort({ saleDate: 1 }).lean().exec();
+    const open = await this.getConsignmentModel(db).find({ status: 'open' }).lean().exec();
+    const now = Date.now();
+    const consignments = { units: 0, value: 0, overdueUnits: 0, resellers: new Set<string>().size };
+    for (const c of open as any[]) {
+      const out = (c.items || []).filter((i: any) => i.status === 'out');
+      consignments.units += out.length;
+      consignments.value += out.reduce((n: number, i: any) => n + i.price, 0);
+      if (new Date(c.dueAt).getTime() < now) consignments.overdueUnits += out.length;
+    }
+    const built = buildClosingReport({
+      shopName: shop.name || 'Ma boutique',
+      currency: shop.currency || 'F CFA',
+      closing: { ...closing, code: closingCode(closing._id) },
+      sales: sales as any,
+      consignments,
+    });
+    const contacts = await this.ownerContacts(db, shop);
+    return { ...built, code: closingCode(closing._id), ownerPhone: contacts.phone, emailedTo: closing.emailedTo || [], emailedAt: closing.emailedAt || null, mailEnabled: !!this.mail?.enabled };
+  }
+
+  /** Envoi automatique du rapport au patron, en arrière-plan (ne bloque jamais la clôture) */
+  private async emailReport(db: string, closing: any, shop: ShopInfo) {
+    if (!this.mail?.enabled) return;
+    const { emails } = await this.ownerContacts(db, shop);
+    if (!emails.length) return;
+    const r = await this.report(db, String(closing._id), { userId: String(closing.sellerId) }, shop);
+    const ok = await this.mail.send({ to: emails, subject: r.subject, text: r.text.replace(/\*/g, ''), html: r.html });
+    if (ok) await this.getClosingModel(db).updateOne({ _id: closing._id }, { $set: { emailedTo: emails, emailedAt: new Date() } });
+  }
 
   private getSaleModel(db: string) { return this.tenantConnectionService.getModel<Sale>(db, Sale.name, SaleSchema); }
   private getReturnModel(db: string) { return this.tenantConnectionService.getModel<ProductReturn>(db, ProductReturn.name, ProductReturnSchema); }
@@ -141,7 +206,7 @@ export class CashClosingsService {
    * en une seule écriture (une vente ne peut pas être comptée deux fois, ni manquée si une vente
    * arrive pendant la clôture : elle ira dans la suivante).
    */
-  async close(db: string, actor: Actor, dto: CloseRegisterDto) {
+  async close(db: string, actor: Actor, dto: CloseRegisterDto, shop: ShopInfo = {}) {
     const saleModel = this.getSaleModel(db);
     const closingModel = this.getClosingModel(db);
     const sellerId = new Types.ObjectId(actor.userId);
@@ -187,6 +252,7 @@ export class CashClosingsService {
       });
 
       await this.publishClosed(db, closing, actor);
+      this.emailReport(db, closing, shop).catch((e) => this.logger.warn(`Rapport de clôture non envoyé : ${e.message}`));
       return closing;
     } catch (e) {
       // Échec après la réservation : les ventes redeviennent « à clôturer »

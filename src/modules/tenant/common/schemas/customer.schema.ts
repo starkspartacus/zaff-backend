@@ -35,6 +35,10 @@ export class Customer {
   @Prop({ default: false, index: true })
   isReseller: boolean;
 
+  /** Pièce d'identité (revendeur, facultatif) : n° de CNI / passeport */
+  @Prop({ trim: true, default: null })
+  idNumber: string;
+
   /** Reste à payer (ventes à crédit non soldées) */
   @Prop({ default: 0 })
   balance: number;

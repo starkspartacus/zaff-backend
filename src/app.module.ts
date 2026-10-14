@@ -27,6 +27,8 @@ import { CashClosingsModule } from './modules/tenant/cash-closings/cash-closings
 import { SettingsModule } from './modules/tenant/settings/settings.module';
 import { ReturnsModule } from './modules/tenant/returns/returns.module';
 import { ContractsModule } from './modules/tenant/contracts/contracts.module';
+import { MailModule } from './modules/mail/mail.service';
+import { ConsignmentsModule } from './modules/tenant/consignments/consignments.module';
 
 @Module({
   imports: [
@@ -60,6 +62,8 @@ import { ContractsModule } from './modules/tenant/contracts/contracts.module';
     SettingsModule,
     ReturnsModule,
     ContractsModule,
+    MailModule,
+    ConsignmentsModule,
   ],
 })
 export class AppModule {}

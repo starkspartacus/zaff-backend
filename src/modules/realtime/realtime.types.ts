@@ -11,7 +11,8 @@ export type DataScope =
   | 'suppliers'
   | 'users'
   | 'cash-closings'
-  | 'returns';
+  | 'returns'
+  | 'consignments';
 
 export interface SocketUser {
   userId: string;

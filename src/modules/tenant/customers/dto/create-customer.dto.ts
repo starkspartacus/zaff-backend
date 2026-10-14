@@ -46,4 +46,9 @@ export class CreateCustomerDto {
   @IsBoolean()
   @IsOptional()
   isReseller?: boolean;
+
+  @ApiPropertyOptional({ example: 'CI0012345678', description: "Pièce d'identité du revendeur (facultatif)" })
+  @IsString()
+  @IsOptional()
+  idNumber?: string;
 }
