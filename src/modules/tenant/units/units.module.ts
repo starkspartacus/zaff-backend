@@ -8,5 +8,6 @@ import { UnitsService } from './units.service';
   imports: [EstablishmentsModule, SalesModule],
   controllers: [UnitsController],
   providers: [UnitsService],
+  exports: [UnitsService],
 })
 export class UnitsModule {}

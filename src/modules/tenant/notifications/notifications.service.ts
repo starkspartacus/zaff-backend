@@ -20,6 +20,7 @@ const PUSH_URL: Record<string, string> = {
   'consignment.created': '/app/consignments',
   'consignment.settled': '/app/consignments',
   'consignment.overdue': '/app/consignments',
+  'purchase.received': '/app/suppliers',
 };
 
 export interface NotifyInput {

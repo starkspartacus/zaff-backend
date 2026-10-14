@@ -318,6 +318,21 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   par e-mail au propriétaire** à chaque clôture (`MailService`, **Resend** : `RESEND_API_KEY` `re_…` + `MAIL_FROM` d'un
   domaine vérifié dans Resend ; sans clé, pas d'e-mail).
 
+## Fournisseurs et commandes (`/suppliers`, propriétaire et magasinier)
+- Fournisseurs : téléphone E.164 (pays de la boutique), `GET /suppliers` avec `amountDue`, `openOrders` ; suppression
+  (propriétaire) refusée s'il a des commandes.
+- **Bon de commande** `POST /suppliers/orders { supplierId, items[{ productId, quantity, unitPrice? }], expectedAt?, notes? }` :
+  code `BC-<n>` (séquence `purchase_order`), prix = prix d'achat du catalogue par défaut, **totaux calculés par le serveur**.
+  Statuts `pending → partial → received` (ou `cancelled`).
+- **Réception** `POST /suppliers/orders/:id/receive { items[{ productId, quantity | serialNumbers[] }] }` : produit suivi →
+  `UnitsService.addUnits` (doublons refusés, mouvement `purchase` lié à la commande) ; sinon `$inc` atomique du stock.
+  Quantités reçues ajoutées avec un **verrou optimiste** (`version`), plusieurs réceptions partielles, historique
+  `receptions`, prix d'achat du catalogue mis à jour, notification `purchase.received` (→ admin, storekeeper).
+- `PATCH /:id/close` (solder : reliquat abandonné, dette ramenée au reçu) ; `PATCH /:id/cancel` (rien reçu ni payé).
+- **Paiement** `POST /:id/payments { amount, method }` (propriétaire) : débit atomique de `amountDue`, jamais au-delà.
+- `GET /suppliers/orders/suggestions` : articles ≤ `minStockAlert`, quantité conseillée (2 × seuil − stock − déjà commandé),
+  dernier fournisseur et prix. `GET /suppliers/orders/summary`. Anciennes commandes complétées à la volée (`upgrade`).
+
 ## Conventions
 - Réponses HTTP enveloppées `{ success, data, timestamp }` (`TransformInterceptor`) ; erreurs `{ success:false, message, details? }`.
 - Messages d'erreur métier en français, compréhensibles par un vendeur (« L'appareil X a déjà été vendu (facture #1001) »).
