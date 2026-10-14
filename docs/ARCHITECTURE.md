@@ -304,6 +304,20 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   `GET /notifications/push/config`.
 - Présence en mémoire : une seule instance. Pour plusieurs instances, ajouter l'adaptateur Redis de Socket.IO.
 
+## Dépôt revendeur (`/consignments`, propriétaire et vendeur)
+- `POST /consignments` : appareils confiés à un revendeur (client `isReseller`, pièce d'identité `idNumber` facultative),
+  prix convenu par appareil (vendeur : jamais sous le prix d'achat), délai `days` (**3 jours par défaut**, 1–60), bon `DR-<n>`.
+  Unité `in_stock → consigned` (atomique, stock −1, mouvement tracé, rollback) ; `lookup` renvoie le bloc `consignment`.
+- `POST /consignments/:id/settle { sold[], returned[], paymentMethod, depositAmount? }` : vendus → vente revendeur au prix
+  convenu (`SalesService.create(..., { consignedSerials })`, crédit possible) ; rendus → `in_stock`, stock +1. Bon clos quand
+  plus rien n'est dehors. Une unité `consigned` ne peut être ni modifiée ni supprimée.
+- Rappel toutes les heures `consignment.overdue` (→ propriétaire + qui a remis, au plus toutes les 20 h).
+
+## Rapport de clôture de caisse
+- `GET /cash-closings/:id/report` : texte (WhatsApp), HTML (e-mail), `ownerPhone`, `emailedTo/At`. Envoyé **automatiquement
+  par e-mail au propriétaire** à chaque clôture (`MailService`, **Resend** : `RESEND_API_KEY` `re_…` + `MAIL_FROM` d'un
+  domaine vérifié dans Resend ; sans clé, pas d'e-mail).
+
 ## Conventions
 - Réponses HTTP enveloppées `{ success, data, timestamp }` (`TransformInterceptor`) ; erreurs `{ success:false, message, details? }`.
 - Messages d'erreur métier en français, compréhensibles par un vendeur (« L'appareil X a déjà été vendu (facture #1001) »).

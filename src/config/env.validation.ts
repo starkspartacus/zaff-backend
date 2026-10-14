@@ -14,11 +14,8 @@ export interface EnvVars {
   VAPID_PUBLIC_KEY: string | null;
   VAPID_PRIVATE_KEY: string | null;
   VAPID_SUBJECT: string;
-  /** E-mails (rapports de clôture au patron) par SMTP : facultatif, sans SMTP_HOST aucun e-mail n'est envoyé */
-  SMTP_HOST: string | null;
-  SMTP_PORT: number;
-  SMTP_USER: string | null;
-  SMTP_PASS: string | null;
+  /** E-mails (rapports de clôture au patron) par Resend : facultatif, sans RESEND_API_KEY aucun e-mail n'est envoyé */
+  RESEND_API_KEY: string | null;
   MAIL_FROM: string | null;
   /** Stockage des photos / vidéos sur UploadThing (facultatif : sans jeton, stockage dans MongoDB) */
   UPLOADTHING_TOKEN: string | null;
@@ -67,12 +64,10 @@ export function validateEnv(raw: Record<string, unknown>): EnvVars {
   const vapidSubject = get('VAPID_SUBJECT') || 'mailto:contact@zaff.app';
   if (vapidPublic && !/^(mailto:|https:\/\/)/.test(vapidSubject)) errors.push('VAPID_SUBJECT doit être un mailto: ou une URL https://');
 
-  const smtpHost = get('SMTP_HOST');
-  const smtpPort = Number(get('SMTP_PORT') || 587);
-  if (smtpHost && (!Number.isInteger(smtpPort) || smtpPort <= 0)) errors.push('SMTP_PORT doit être un numéro de port (587, 465…).');
-  if (smtpHost && !!get('SMTP_USER') !== !!get('SMTP_PASS')) errors.push('SMTP_USER et SMTP_PASS vont ensemble.');
-  const mailFrom = get('MAIL_FROM') || get('SMTP_USER');
-  if (smtpHost && !mailFrom) errors.push("MAIL_FROM (adresse d'envoi) est obligatoire avec SMTP_HOST.");
+  const resendKey = get('RESEND_API_KEY');
+  const mailFrom = get('MAIL_FROM');
+  if (resendKey && !resendKey.startsWith('re_')) errors.push('RESEND_API_KEY doit commencer par « re_ » (Resend > API Keys).');
+  if (resendKey && !mailFrom) errors.push("MAIL_FROM (adresse d'envoi d'un domaine vérifié dans Resend) est obligatoire avec RESEND_API_KEY.");
 
   const uploadthingToken = get('UPLOADTHING_TOKEN');
   if (uploadthingToken && uploadthingToken.length < 20) errors.push('UPLOADTHING_TOKEN semble incomplet (Dashboard UploadThing > API Keys > V7).');
@@ -126,10 +121,7 @@ export function validateEnv(raw: Record<string, unknown>): EnvVars {
     VAPID_PRIVATE_KEY: vapidPrivate || null,
     VAPID_SUBJECT: vapidSubject,
     UPLOADTHING_TOKEN: uploadthingToken || null,
-    SMTP_HOST: smtpHost || null,
-    SMTP_PORT: smtpPort,
-    SMTP_USER: get('SMTP_USER') || null,
-    SMTP_PASS: get('SMTP_PASS') || null,
+    RESEND_API_KEY: resendKey || null,
     MAIL_FROM: mailFrom || null,
     PLATFORM_ADMIN_EMAIL: adminEmail || null,
     PLATFORM_ADMIN_PASSWORD: adminPassword || null,

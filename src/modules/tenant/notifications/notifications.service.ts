@@ -17,6 +17,9 @@ const PUSH_URL: Record<string, string> = {
   'repair.ready': '/app/repairs',
   'catalog.photo': '/app/catalog',
   'customer.payment': '/app/customers',
+  'consignment.created': '/app/consignments',
+  'consignment.settled': '/app/consignments',
+  'consignment.overdue': '/app/consignments',
 };
 
 export interface NotifyInput {

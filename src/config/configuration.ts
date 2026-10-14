@@ -19,10 +19,7 @@ export default () => {
       password: env.PLATFORM_ADMIN_PASSWORD,
     },
     mail: {
-      host: env.SMTP_HOST,
-      port: env.SMTP_PORT,
-      user: env.SMTP_USER,
-      pass: env.SMTP_PASS,
+      apiKey: env.RESEND_API_KEY,
       from: env.MAIL_FROM,
     },
     media: {
