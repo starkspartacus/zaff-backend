@@ -16,10 +16,12 @@ const matches = (doc: any, query: any = {}): boolean =>
         if (op === '$lte') return value <= arg;
         if (op === '$lt') return value < arg;
         if (op === '$gt') return value > arg;
-        if (op === '$in') return arg.some((x: any) => eq(x, value));
+        // Comme MongoDB : sur un champ tableau, $in / $nin / $ne portent sur ses éléments
+        if (op === '$in') return Array.isArray(value) ? value.some((v) => arg.some((x: any) => eq(x, v))) : arg.some((x: any) => eq(x, value));
         // Comme MongoDB : { $ne: null } exclut aussi les champs absents
+        if (op === '$ne' && Array.isArray(value)) return !value.some((v) => eq(v, arg));
         if (op === '$ne') return arg === null ? value !== null && value !== undefined : !eq(value, arg);
-        if (op === '$nin') return !arg.some((x: any) => eq(x, value));
+        if (op === '$nin') return Array.isArray(value) ? !value.some((v) => arg.some((x: any) => eq(x, v))) : !arg.some((x: any) => eq(x, value));
         if (op === '$regex') return new RegExp(arg, (cond as { $options?: string }).$options || '').test(String(value ?? ''));
         if (op === '$options') return true;
         if (op === '$exists') return (value !== undefined) === !!arg;

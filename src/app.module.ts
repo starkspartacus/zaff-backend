@@ -29,6 +29,7 @@ import { ReturnsModule } from './modules/tenant/returns/returns.module';
 import { ContractsModule } from './modules/tenant/contracts/contracts.module';
 import { MailModule } from './modules/mail/mail.service';
 import { ConsignmentsModule } from './modules/tenant/consignments/consignments.module';
+import { StockCountsModule } from './modules/tenant/stock-counts/stock-counts.module';
 
 @Module({
   imports: [
@@ -64,6 +65,7 @@ import { ConsignmentsModule } from './modules/tenant/consignments/consignments.m
     ContractsModule,
     MailModule,
     ConsignmentsModule,
+    StockCountsModule,
   ],
 })
 export class AppModule {}

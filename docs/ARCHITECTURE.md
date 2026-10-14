@@ -333,6 +333,20 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 - `GET /suppliers/orders/suggestions` : articles ≤ `minStockAlert`, quantité conseillée (2 × seuil − stock − déjà commandé),
   dernier fournisseur et prix. `GET /suppliers/orders/summary`. Anciennes commandes complétées à la volée (`upgrade`).
 
+## Inventaire par scan (`/stock-counts`)
+- Une session à la fois (`INV-<n>`, collection `stock_counts`), tout le stock ou une `category` ; démarrer / terminer /
+  annuler : propriétaire, magasinier ; **scanner : toute l'équipe (vendeurs compris), en même temps**.
+- `POST /:id/scan { code }` : N° de série → ajouté une seule fois (`$push` conditionnel `serials $nin`) ; résultat
+  `found` (en stock) | `already` | `unexpected` (vendu, en dépôt, défectueux, chez le client — raison) | `other_category` ;
+  code-barres d'un produit sans N° de série → +1 ; boîte d'un produit suivi → « scannez le N° de série » ; inconnu →
+  `unknownCodes`. `POST /:id/count { productId, qty }` : ajout / correction (entrées `$push`, somme = compté).
+- `snapshot` : stock attendu des produits sans N° de série **au démarrage** ; à la clôture, si `applyAdjustments`, `$inc`
+  de l'écart compté − attendu (les ventes faites pendant le comptage restent déduites, jamais sous 0), mouvement
+  `adjustment`. Clôture verrouillée (`open → closing → closed`, retour à `open` en cas d'erreur).
+- Rapport `report` : `missing` (en stock, pas scannés, valeur d'achat), `unexpected` (`duringCount` = vendu pendant
+  l'inventaire, normal), `unknownCodes`, `plain`. Les manquants ne changent **pas** de statut automatiquement.
+  Notification `stock.count.closed` (→ admin, `warning` s'il manque des appareils). Scope temps réel `stock-counts`.
+
 ## Conventions
 - Réponses HTTP enveloppées `{ success, data, timestamp }` (`TransformInterceptor`) ; erreurs `{ success:false, message, details? }`.
 - Messages d'erreur métier en français, compréhensibles par un vendeur (« L'appareil X a déjà été vendu (facture #1001) »).
@@ -354,6 +368,6 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 - `npm run test:boot` : démarre toute l'app sans MongoDB (connexion simulée) : injection, routes, WebSocket.
 - `npm run dev:memory` : le **vrai** backend (contrôleurs, gardes, validation, services, WebSocket) sur une base en
   mémoire (`test/memory-server.ts`, données de démo, comptes +2250700000001/2/3 mot de passe « secret »). Sert aux
-  démonstrations et aux tests navigateur sans MongoDB. Si un service utilise un opérateur Mongo non géré par
+  démonstrations et aux tests navigateur sans MongoDB. Le fake applique `$in` / `$nin` / `$ne` élément par élément sur un champ tableau (comme MongoDB). Si un service utilise un opérateur Mongo non géré par
   `src/testing/fake-model.ts`, l'ajouter au fake (il échoue explicitement plutôt que de répondre faux).
 - Le lint (prettier) signale de nombreux écarts de formatage antérieurs : ne pas reformater tout le dépôt dans un changement fonctionnel.
