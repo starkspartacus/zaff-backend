@@ -13,6 +13,7 @@ import { AddUnitsDto, SellUnitDto, UpdateUnitStatusDto } from './dto/units.dto';
 import { NotificationsService } from '../notifications/notifications.service';
 import { Consignment, ConsignmentSchema } from '../consignments/consignment.schema';
 import { daysSince } from '../consignments/consignments.service';
+import { codeRejectReason } from '../code-labels/code-labels.service';
 
 const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -93,6 +94,12 @@ export class UnitsService {
       seen.add(serialNumber);
       if (serialNumber.length < 4) {
         rejected.push({ serialNumber, reason: 'N° de série trop court.' });
+        continue;
+      }
+
+      const codeProblem = await codeRejectReason(this.tenantConnectionService, db, serialNumber);
+      if (codeProblem) {
+        rejected.push({ serialNumber, reason: codeProblem });
         continue;
       }
 

@@ -30,6 +30,7 @@ import { ContractsModule } from './modules/tenant/contracts/contracts.module';
 import { MailModule } from './modules/mail/mail.service';
 import { ConsignmentsModule } from './modules/tenant/consignments/consignments.module';
 import { StockCountsModule } from './modules/tenant/stock-counts/stock-counts.module';
+import { CodeLabelsModule } from './modules/tenant/code-labels/code-labels.module';
 
 @Module({
   imports: [
@@ -66,6 +67,7 @@ import { StockCountsModule } from './modules/tenant/stock-counts/stock-counts.mo
     MailModule,
     ConsignmentsModule,
     StockCountsModule,
+    CodeLabelsModule,
   ],
 })
 export class AppModule {}

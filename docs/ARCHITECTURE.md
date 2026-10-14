@@ -347,6 +347,19 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   l'inventaire, normal), `unknownCodes`, `plain`. Les manquants ne changent **pas** de statut automatiquement.
   Notification `stock.count.closed` (→ admin, `warning` s'il manque des appareils). Scope temps réel `stock-counts`.
 
+## Codes appareils générés (`/code-labels`, propriétaire et magasinier)
+- Pour les appareils livrés sans N° de série exploitable. **Série par catégorie** (`code_series`) : préfixe 2–5 lettres
+  unique (`TEL`, `PC`… proposés par `suggestPrefix`), créée / modifiée / supprimée par le propriétaire, **verrouillée dès le
+  1er code généré**.
+- Code `PRÉFIXE-NNNNNNNC` (`code-format.ts`) : 7 chiffres de séquence + chiffre de contrôle Luhn. Plage **réservée
+  atomiquement** (`counters` `label:<PRÉFIXE>`, `$inc` du nombre demandé) : jamais deux fois le même code ; un N° de série
+  identique déjà saisi à la main est sauté.
+- **Lot** `LOT-<n>` (`code_batches`) : qui (nom, rôle), quand, codes, modèle prévu, impressions (`prints`, `POST
+  /batches/:id/printed`) ; détail = état de chaque code (libre / sur tel appareil). Génération par le magasinier →
+  notification `codes.generated` (→ admin).
+- **Mise en stock** : `addUnits` refuse un code au format ZAFF d'une série connue dont le chiffre de contrôle est faux
+  (« mal saisi ») ou jamais généré (`codeRejectReason`). Ensuite le code sert de N° de série partout (vente, retours…).
+
 ## Conventions
 - Réponses HTTP enveloppées `{ success, data, timestamp }` (`TransformInterceptor`) ; erreurs `{ success:false, message, details? }`.
 - Messages d'erreur métier en français, compréhensibles par un vendeur (« L'appareil X a déjà été vendu (facture #1001) »).

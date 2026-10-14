@@ -10,6 +10,7 @@ export type DataScope =
   | 'repairs'
   | 'suppliers'
   | 'stock-counts'
+  | 'code-labels'
   | 'users'
   | 'cash-closings'
   | 'returns'

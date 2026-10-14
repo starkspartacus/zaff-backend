@@ -22,6 +22,7 @@ const PUSH_URL: Record<string, string> = {
   'consignment.overdue': '/app/consignments',
   'purchase.received': '/app/suppliers',
   'stock.count.closed': '/app/inventory',
+  'codes.generated': '/app/labels',
 };
 
 export interface NotifyInput {
