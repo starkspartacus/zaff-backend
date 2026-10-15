@@ -1,7 +1,7 @@
 import { Types } from 'mongoose';
 import { FakeModel, fakeTenantConnection } from '../../../testing/fake-model';
 import { ImagesService, imageKey, modelKeyOf, PENDING_TTL_MS, sniffImage } from './images.service';
-import { UploadThingClient, UploadThingStorage, RemoteFile } from './media-storage';
+import { UploadThingClient, UploadThingStorage, RemoteFile, cleanUploadThingToken, uploadThingTokenProblem } from './media-storage';
 import { CatalogService } from '../../tenant/catalog/catalog.service';
 
 const jpeg = (n = 1) => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(200, n)]);
@@ -15,7 +15,9 @@ class FakeUploadThing implements UploadThingClient {
   files = new Map<string, RemoteFile>();
   n = 0;
   failNext = false;
+  badToken = false;
   async uploadFiles(f: any) {
+    if (this.badToken) return { data: null, error: { message: 'Invalid signing secret' } };
     if (this.failNext) {
       this.failNext = false;
       return { data: null, error: { message: 'panne' } };
@@ -57,6 +59,26 @@ describe("Photos partagées : UploadThing, sans fichier orphelin", () => {
     expect(await images.search(meta)).toHaveLength(1);
     // Nom affiché avec la marque (« Samsung Galaxy A55 5G ») : même photo
     expect(await images.search({ ...meta, model: 'Samsung Galaxy A55 5G' })).toHaveLength(1);
+  });
+
+  it('UploadThing refuse le jeton (« Invalid signing secret ») : photo gardée dans MongoDB, le produit peut s\'enregistrer', async () => {
+    ut.badToken = true;
+    const img = await images.upload(file(9), meta, shopA, { shopOnly: true, thumb: { buffer: jpeg(3), size: 204 } });
+    expect(doc(img.id)).toMatchObject({ storage: 'database', storageKey: null, url: null });
+    const f = await images.file(img.id);
+    expect([f.url, Buffer.from(f.data!).length]).toEqual([null, 204]);
+    // Une vraie panne (pas un problème de jeton) reste une erreur
+    ut.badToken = false;
+    ut.failNext = true;
+    await expect(images.upload(file(10), meta, shopA)).rejects.toThrow(/indisponible/);
+  });
+
+  it('jeton UploadThing : guillemets retirés, jeton incomplet expliqué sans être affiché', () => {
+    const v7 = Buffer.from(JSON.stringify({ apiKey: 'sk_live_x', appId: 'abc', regions: ['sea1'] })).toString('base64');
+    expect(cleanUploadThingToken(`  "${v7}" `)).toBe(v7);
+    expect(uploadThingTokenProblem(v7)).toBeNull();
+    expect(uploadThingTokenProblem('sk_live_1234567890abcdef')).toMatch(/V7/);
+    expect(uploadThingTokenProblem(Buffer.from(JSON.stringify({ apiKey: 'sk_live_x' })).toString('base64'))).toMatch(/appId/);
   });
 
   it('photo prise par une boutique : visible et utilisable par elle seule, effacée si le produit ne la garde pas', async () => {

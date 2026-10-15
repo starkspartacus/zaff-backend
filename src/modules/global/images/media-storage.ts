@@ -29,6 +29,34 @@ export const MEDIA_STORAGE = 'MEDIA_STORAGE';
 /** Préfixe des identifiants ZAFF chez UploadThing : on ne touche jamais aux autres fichiers du compte */
 export const CUSTOM_ID_PREFIX = 'zaff-';
 
+/** UploadThing refuse nos identifiants (jeton faux, ancien, mal copié) : rien à voir avec la photo envoyée */
+export class StorageConfigError extends Error {}
+
+const CONFIG_ERROR_RE = /signing secret|invalid token|invalid api key|api key|unauthori[sz]ed|forbidden|\b401\b|\b403\b|missing token|app not found/i;
+
+/** Nettoie un jeton collé avec des guillemets ou des espaces */
+export function cleanUploadThingToken(raw: string | null | undefined): string | null {
+  const t = (raw || '').trim().replace(/^['"]+|['"]+$/g, '').trim();
+  return t || null;
+}
+
+/**
+ * Vérifie la forme d'un jeton UploadThing V7 (base64 d'un JSON { apiKey: "sk_…", appId, regions }).
+ * Renvoie la raison en clair s'il est inutilisable, sinon null. Ne renvoie jamais le jeton lui-même.
+ */
+export function uploadThingTokenProblem(token: string): string | null {
+  let parsed: any;
+  try {
+    parsed = JSON.parse(Buffer.from(token, 'base64').toString('utf8'));
+  } catch {
+    return "le jeton n'est pas un jeton V7 (texte base64). Copiez-le depuis Dashboard UploadThing > API Keys > onglet V7 (pas la clé « sk_… » seule).";
+  }
+  if (!parsed || typeof parsed !== 'object') return "le jeton n'est pas un jeton V7.";
+  if (typeof parsed.apiKey !== 'string' || !parsed.apiKey.startsWith('sk_')) return 'le jeton ne contient pas de clé « sk_… » valide.';
+  if (!parsed.appId) return "le jeton ne contient pas l'identifiant de l'application (appId) : utilisez le jeton V7 complet.";
+  return null;
+}
+
 /** Sans UploadThing : le fichier reste dans le document MongoDB (développement, petits volumes) */
 export class DatabaseStorage implements MediaStorage {
   readonly name = 'database' as const;
@@ -60,7 +88,9 @@ export class UploadThingStorage implements MediaStorage {
     const file = new UTFile([new Uint8Array(data)], opts.name, { type: opts.mime, customId: opts.customId });
     const res = await this.client.uploadFiles(file);
     if (res.error || !res.data) {
-      this.logger.error(`Envoi refusé : ${res.error?.message}`);
+      const msg = res.error?.message || 'réponse vide';
+      this.logger.error(`Envoi refusé : ${msg}`);
+      if (CONFIG_ERROR_RE.test(msg)) throw new StorageConfigError(msg);
       throw new Error("Le service de stockage des photos est indisponible. Réessayez dans un instant.");
     }
     return { key: res.data.key, url: res.data.ufsUrl };

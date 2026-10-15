@@ -15,7 +15,7 @@ import { createHash } from 'crypto';
 import { Model, Types } from 'mongoose';
 import { GLOBAL_CONNECTION } from '../../../database/database.constants';
 import { CatalogImage, CatalogImageDocument } from './schemas/catalog-image.schema';
-import { CUSTOM_ID_PREFIX, DatabaseStorage, MEDIA_STORAGE, MediaStorage } from './media-storage';
+import { CUSTOM_ID_PREFIX, DatabaseStorage, MEDIA_STORAGE, MediaStorage, StorageConfigError } from './media-storage';
 
 export const MAX_IMAGE_BYTES = 600 * 1024;
 export const MAX_THUMB_BYTES = 80 * 1024;
@@ -68,6 +68,7 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
   private readonly logger = new Logger(ImagesService.name);
   private timer: NodeJS.Timeout | null = null;
   private readonly storage: MediaStorage;
+  private lastConfigAlert = 0;
 
   constructor(
     @InjectModel(CatalogImage.name, GLOBAL_CONNECTION) private readonly model: Model<CatalogImageDocument>,
@@ -78,7 +79,9 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
 
   onApplicationBootstrap() {
     if (process.env.NODE_ENV === 'test') return;
-    this.logger.log(`Photos stockées sur ${this.storage.name === 'uploadthing' ? 'UploadThing' : 'MongoDB (UPLOADTHING_TOKEN absent)'}`);
+    this.logger.log(`Photos stockées sur ${this.storage.name === 'uploadthing' ? 'UploadThing' : 'MongoDB'}`);
+    // Vérifie tout de suite que UploadThing accepte le jeton (sinon le journal le dit dès le démarrage)
+    this.storage.usage?.().catch((e: Error) => this.alertConfig(e?.message || 'jeton refusé'));
     this.timer = setInterval(() => this.cleanup().catch((e) => this.logger.warn(`Nettoyage des photos : ${e.message}`)), PENDING_TTL_MS);
     this.timer.unref();
   }
@@ -170,11 +173,22 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
     }
 
     const baseName = imageKey(`${meta.brand} ${meta.model} ${meta.color || ''}`).replace(/ /g, '-');
-    const stored = await this.storage.put(file.buffer, { name: `${baseName}.${EXT[mime]}`, mime, customId: `${CUSTOM_ID_PREFIX}${sha256}` });
+    // UploadThing refuse nos identifiants : la photo est gardée dans MongoDB (le produit s'enregistre quand même)
+    let inDatabase = this.storage.name === 'database';
+    let stored: { key: string | null; url: string | null } = { key: null, url: null };
+    if (!inDatabase) {
+      try {
+        stored = await this.storage.put(file.buffer, { name: `${baseName}.${EXT[mime]}`, mime, customId: `${CUSTOM_ID_PREFIX}${sha256}` });
+      } catch (e) {
+        if (!(e instanceof StorageConfigError)) throw e;
+        this.alertConfig(e.message);
+        inDatabase = true;
+      }
+    }
     let storedThumb: { key: string | null; url: string | null } = { key: null, url: null };
     const thumbMime = thumb ? sniffImage(thumb.buffer)! : null;
     try {
-      if (thumb && thumbMime) {
+      if (thumb && thumbMime && !inDatabase) {
         storedThumb = await this.storage.put(thumb.buffer, { name: `${baseName}-vignette.${EXT[thumbMime]}`, mime: thumbMime, customId: `${CUSTOM_ID_PREFIX}${sha256}-t` });
       }
       const created = await this.model.create({
@@ -187,12 +201,12 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
         modelKey: modelKeyOf(meta.brand, meta.model),
         colorKey: imageKey(meta.color) || null,
         mime,
-        data: this.storage.name === 'database' ? file.buffer : null,
-        storage: this.storage.name,
+        data: inDatabase ? file.buffer : null,
+        storage: inDatabase ? 'database' : this.storage.name,
         storageKey: stored.key,
         url: stored.url,
         bytes: file.size,
-        thumbData: thumb && this.storage.name === 'database' ? thumb.buffer : null,
+        thumbData: thumb && inDatabase ? thumb.buffer : null,
         thumbKey: storedThumb.key,
         thumbUrl: storedThumb.url,
         thumbBytes: thumb?.size || 0,
@@ -214,6 +228,16 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
   }
 
   /** Fichier (ou sa vignette s'il en a une) : `url` pour une redirection vers UploadThing, sinon `data` */
+  /** Alerte claire dans le journal (au plus une fois par 10 min) quand UploadThing refuse le jeton */
+  private alertConfig(reason: string) {
+    if (Date.now() - this.lastConfigAlert < 10 * 60_000) return;
+    this.lastConfigAlert = Date.now();
+    this.logger.error(
+      `UploadThing refuse UPLOADTHING_TOKEN (${reason}). Photos gardées dans MongoDB en attendant : ` +
+        'régénérez le jeton V7 (Dashboard UploadThing > API Keys), mettez-le dans .env sans guillemets, puis redémarrez.',
+    );
+  }
+
   async file(id: string, size: 'full' | 'thumb' = 'full') {
     if (!Types.ObjectId.isValid(id)) throw new NotFoundException('Image introuvable.');
     const img: any = await this.model.findById(id).select('+data +thumbData mime sha256 url storage thumbUrl thumbBytes').lean().exec();

@@ -238,7 +238,10 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 ## Images produits partagées (`/global/images`) — UploadThing, sans fichier orphelin
 - **Stockage** (`media-storage.ts`, jeton `MEDIA_STORAGE`) : **UploadThing** si `UPLOADTHING_TOKEN` est défini (envoi
   côté serveur avec `UTApi`, après nos vérifications ; `customId` = `zaff-<sha256>`), sinon dans MongoDB (développement,
-  `dev:memory`). La fiche garde `storage`, `storageKey`, `url`.
+  `dev:memory`). La fiche garde `storage`, `storageKey`, `url`. **Jeton refusé** (« Invalid signing secret », 401…,
+  `StorageConfigError`) → la photo est gardée dans MongoDB (`storage: 'database'`) et le produit s'enregistre ; erreur claire
+  au journal (10 min max) ; jeton vérifié au démarrage (forme V7 `uploadThingTokenProblem`, guillemets retirés, appel
+  `usage()`), jeton inutilisable → MongoDB. Une vraie panne d'UploadThing reste une erreur.
 - `GET /global/images?brand&model&color&category` (connecté) : photos du modèle, toutes boutiques, la couleur demandée
   d'abord puis les plus utilisées ; jamais les photos encore « en attente ». Clé du modèle **sans la marque en tête**
   (`modelKeyOf` : « Samsung Galaxy A55 » = « Galaxy A55 »). `GET /global/images/:id/file` : **public** (balise `<img>`) —
