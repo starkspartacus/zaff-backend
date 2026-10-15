@@ -23,6 +23,7 @@ const PUSH_URL: Record<string, string> = {
   'purchase.received': '/app/suppliers',
   'stock.count.closed': '/app/inventory',
   'codes.generated': '/app/labels',
+  'stock.received': '/app/receptions',
 };
 
 export interface NotifyInput {

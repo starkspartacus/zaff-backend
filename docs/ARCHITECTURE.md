@@ -66,6 +66,15 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 - **Code-barres du modèle = celui de la BOÎTE**, jamais un IMEI : `assertBarcodeFree` refuse un IMEI valide (`common/imei.ts`)
   ou le N° de série d'un appareil existant (seulement si le code-barres change). Ancienne fiche dont le code-barres est un
   IMEI : `addUnits` le vide quand cet IMEI est mis en stock (il devient le N° de série de l'appareil).
+- **Variantes** `POST /catalog/products/:id/variant { model?, color? }` : même famille (catégorie + marque + nom), autre
+  capacité / couleur = **fiche et stock séparés** (prix, état, appareil du catalogue repris ; photo reprise pour la même
+  couleur seulement ; SKU dérivé unique) ; une combinaison déjà existante est renvoyée (`created: false`), jamais dupliquée.
+- **Réceptions (ravitaillements)** `stock_receptions` (`units/receptions/`) : `POST /stock-receptions { items[{ productId,
+  serialNumbers[] }], note?, supplierName? }` (propriétaire, magasinier) = une réception `REC-<n>` pour tout le lot scanné,
+  tous modèles confondus (`addUnits` par modèle, `silent`, mouvements liés à la réception) ; lignes catégorie → modèle →
+  N° de série, `unitCost`, `totalUnits`, `totalValue`, `byCategory`, refusés gardés ; **une** notification `stock.received`
+  (→ admin : « Téléphones 20, Tablettes 4 »). La réception d'une commande fournisseur y est aussi enregistrée (`source:
+  purchase_order`, `orderCode`, sans 2e notification). `GET /stock-receptions?from&to&category`, `GET /:id`. Scope `receptions`.
 - Produit **sans** N° de série : mouvements `POST /stock/movements` (propriétaire, magasinier) **atomiques** (`$inc` conditionnel,
   jamais « lire puis écrire »), quantité entière ≥ 0 ; ajustement = nouveau stock compté (`quantity`), écart dans la note.
   Stock saisi dans la fiche produit (création, modification) → mouvement tracé. `PUT /catalog/products/:id` validé

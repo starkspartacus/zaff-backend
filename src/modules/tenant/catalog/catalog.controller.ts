@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { CatalogService } from './catalog.service';
-import { CreateCategoryDto, CreateBrandDto, CreateProductDto, UpdateProductDto, SetupHierarchyDto } from './dto/create-catalog.dto';
+import { CreateCategoryDto, CreateBrandDto, CreateProductDto, UpdateProductDto, CreateVariantDto, SetupHierarchyDto } from './dto/create-catalog.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../../../common/guards/tenant.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
@@ -62,6 +62,13 @@ export class CatalogController {
   @ApiOperation({ summary: 'Ajouter un produit' })
   createProduct(@CurrentTenant() tenant: any, @CurrentUser() user: any, @Body() dto: CreateProductDto) {
     return this.catalogService.createProduct(tenant.databaseName, dto, { establishmentId: String(tenant._id), name: user?.name });
+  }
+
+  @Roles(Role.ADMIN, Role.STOREKEEPER)
+  @Post('products/:id/variant')
+  @ApiOperation({ summary: 'Créer (ou retrouver) une variante du modèle : autre capacité / couleur, stock séparé' })
+  createVariant(@CurrentTenant() tenant: any, @CurrentUser() user: any, @Param('id') id: string, @Body() dto: CreateVariantDto) {
+    return this.catalogService.createVariant(tenant.databaseName, id, dto, { establishmentId: String(tenant._id), name: user?.name });
   }
 
   @Roles(Role.ADMIN, Role.STOREKEEPER)

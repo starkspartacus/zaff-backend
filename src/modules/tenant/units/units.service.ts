@@ -70,7 +70,7 @@ export class UnitsService {
   }
 
   /** Mise en stock par scan (magasinier) : chaque N° de série devient une unité */
-  async addUnits(db: string, dto: AddUnitsDto, actor: Actor, ref?: { id: string; label: string }) {
+  async addUnits(db: string, dto: AddUnitsDto, actor: Actor, ref?: { id: string; label: string; silent?: boolean }) {
     const unitModel = this.getUnitModel(db);
     const product = await this.getProductModel(db).findById(dto.productId);
     if (!product) throw new NotFoundException('Produit non trouvé.');
@@ -153,7 +153,7 @@ export class UnitsService {
         referenceId: ref?.id,
         notes: `${ref ? `${ref.label} — ` : ''}Mise en stock par ${actor.name} : ${serials.slice(0, 10).join(', ')}${serials.length > 10 ? `… (+${serials.length - 10})` : ''}`,
       });
-      await this.notifications.notify(db, {
+      if (!ref?.silent) await this.notifications.notify(db, {
         type: 'units.added',
         title: 'Mise en stock',
         message: `${actor.name} a mis en stock ${created.length} × ${product.name}`,

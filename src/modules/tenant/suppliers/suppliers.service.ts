@@ -1,4 +1,4 @@
-import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, NotFoundException, Optional } from '@nestjs/common';
 import { Types } from 'mongoose';
 import { TenantConnectionService } from '../../../database/tenant-connection.service';
 import { Supplier, SupplierSchema } from '../common/schemas/supplier.schema';
@@ -12,6 +12,7 @@ import { PurchaseOrderStatus } from '../../../common/enums/purchase-order-status
 import { toE164 } from '../../../common/geo/geo';
 import { Actor } from '../sales/sales.service';
 import { UnitsService } from '../units/units.service';
+import { ReceptionsService } from '../units/receptions/receptions.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import {
   CreatePurchaseOrderDto, CreateSupplierDto, ReceivePurchaseOrderDto, SupplierPaymentDto, UpdateSupplierDto,
@@ -28,6 +29,7 @@ export class SuppliersService {
     private readonly tenantConnectionService: TenantConnectionService,
     private readonly units: UnitsService,
     private readonly notifications: NotificationsService,
+    @Optional() private readonly receptions?: ReceptionsService,
   ) {}
 
   private getSupplierModel(db: string) { return this.tenantConnectionService.getModel<Supplier>(db, Supplier.name, SupplierSchema); }
@@ -209,7 +211,7 @@ export class SuppliersService {
       throw new BadRequestException(order.status === PurchaseOrderStatus.CANCELLED ? 'Cette commande est annulée.' : 'Cette commande est déjà entièrement reçue.');
     }
     const label = `Commande ${order.code} (${order.supplierName})`;
-    const results: Array<{ productId: string; productName: string; received: number; rejected: Array<{ serialNumber: string; reason: string }> }> = [];
+    const results: Array<{ productId: string; productName: string; received: number; serials?: string[]; rejected: Array<{ serialNumber: string; reason: string }> }> = [];
     const prodModel = this.getProductModel(db);
 
     for (const line of dto.items) {
@@ -218,8 +220,8 @@ export class SuppliersService {
       if (item.hasSerialNumbers) {
         const serials = (line.serialNumbers || []).filter((s) => s?.trim());
         if (!serials.length) continue;
-        const r = await this.units.addUnits(db, { productId: line.productId, serialNumbers: serials, notes: label }, actor, { id: String(order._id), label });
-        results.push({ productId: line.productId, productName: item.productName, received: r.created.length, rejected: r.rejected });
+        const r = await this.units.addUnits(db, { productId: line.productId, serialNumbers: serials, notes: label }, actor, { id: String(order._id), label, silent: true });
+        results.push({ productId: line.productId, productName: item.productName, received: r.created.length, serials: r.created.map((u: any) => u.serialNumber), rejected: r.rejected });
       } else {
         if (line.serialNumbers?.length) throw new BadRequestException(`« ${item.productName} » n'est pas suivi par N° de série : indiquez une quantité.`);
         const qty = line.quantity || 0;
@@ -283,6 +285,26 @@ export class SuppliersService {
     }
 
     const count = got.reduce((a, r) => a + r.received, 0);
+    // Journal des ravitaillements : la livraison fournisseur y figure comme une réception
+    await this.receptions
+      ?.record(
+        db,
+        {
+          source: 'purchase_order',
+          orderId: String(order._id),
+          orderCode: order.code,
+          supplierName: order.supplierName,
+          lines: got.map((g) => ({
+            productId: g.productId,
+            quantity: g.received,
+            serialNumbers: g.serials || [],
+            unitCost: order.items.find((i: any) => String(i.productId) === g.productId)?.unitPrice,
+          })),
+        },
+        actor,
+        false,
+      )
+      .catch(() => undefined);
     await this.notifications.notify(db, {
       type: 'purchase.received',
       title: 'Livraison fournisseur reçue',

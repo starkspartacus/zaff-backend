@@ -136,6 +136,51 @@ export class CatalogService {
     return created;
   }
 
+  /**
+   * Variante d'un modèle (autre capacité et / ou couleur) : une fiche séparée, avec son propre stock.
+   * Reprend catégorie, marque, nom, prix, état, accessoires, suivi par N° de série et appareil du catalogue ;
+   * la photo n'est reprise que pour la même couleur. Si la variante existe déjà dans la famille, elle est renvoyée.
+   */
+  async createVariant(db: string, baseId: string, variant: { model?: string; color?: string }, actor?: CatalogActor) {
+    const model = this.getProductModel(db);
+    const base: any = await model.findById(baseId).lean().exec();
+    if (!base) throw new NotFoundException('Modèle introuvable.');
+    const cap = (variant.model ?? base.model ?? '').trim();
+    const color = (variant.color ?? base.color ?? '').trim();
+    const key = (v?: string | null) => (v || '').trim().toLowerCase();
+    const family: any[] = await model.find({ category: base.category, name: base.name }).lean().exec();
+    const same = family.find((p) => key(p.brand) === key(base.brand) && key(p.model) === key(cap) && key(p.color) === key(color));
+    if (same) return { product: same, created: false };
+
+    const part = (v: string) => this.slugify(v).toUpperCase().replace(/-/g, '').slice(0, 8);
+    const root = [String(base.sku || 'PRD').split('-')[0], part(cap), part(color)].filter(Boolean).join('-');
+    let sku = root;
+    for (let i = 2; await model.findOne({ sku }).lean().exec(); i++) sku = `${root}-${i}`;
+    const sameColorPhoto = key(color) === key(base.color) ? base.imageId || null : null;
+    const dto: any = {
+      name: base.name,
+      sku,
+      barcode: null,
+      hasSerialNumbers: !!base.hasSerialNumbers,
+      category: base.category,
+      brand: base.brand || undefined,
+      brandId: base.brandId || undefined,
+      model: cap || undefined,
+      color: color || undefined,
+      purchasePrice: base.purchasePrice || 0,
+      salePrice: base.salePrice || 0,
+      resellerPrice: base.resellerPrice || 0,
+      minStockAlert: base.minStockAlert || 0,
+      condition: base.condition,
+      accessories: base.accessories || undefined,
+      deviceId: base.deviceId || undefined,
+      imageId: sameColorPhoto || undefined,
+      stockQuantity: 0,
+    };
+    const created = await this.createProduct(db, dto, actor);
+    return { product: created, created: true };
+  }
+
   async updateProduct(db: string, id: string, dto: UpdateProductDto, actor?: CatalogActor) {
     const model = this.getProductModel(db);
     const product = await model.findById(id);

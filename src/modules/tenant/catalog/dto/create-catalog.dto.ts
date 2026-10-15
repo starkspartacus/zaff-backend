@@ -157,3 +157,17 @@ export class SetupHierarchyDto {
 
 /** Modification d'un produit : mêmes règles que la création, tous les champs facultatifs */
 export class UpdateProductDto extends PartialType(CreateProductDto) {}
+
+export class CreateVariantDto {
+  @ApiPropertyOptional({ example: '128 Go', description: 'Capacité / configuration de la variante' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(60)
+  model?: string;
+
+  @ApiPropertyOptional({ example: 'Noir' })
+  @IsString()
+  @IsOptional()
+  @MaxLength(40)
+  color?: string;
+}

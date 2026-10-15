@@ -11,6 +11,7 @@ export type DataScope =
   | 'suppliers'
   | 'stock-counts'
   | 'code-labels'
+  | 'receptions'
   | 'users'
   | 'cash-closings'
   | 'returns'
