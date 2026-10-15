@@ -81,7 +81,13 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
     if (process.env.NODE_ENV === 'test') return;
     this.logger.log(`Photos stockées sur ${this.storage.name === 'uploadthing' ? 'UploadThing' : 'MongoDB'}`);
     // Vérifie tout de suite que UploadThing accepte le jeton (sinon le journal le dit dès le démarrage)
-    this.storage.usage?.().catch((e: Error) => this.alertConfig(e?.message || 'jeton refusé'));
+    this.storage.usage?.().catch((e: Error) => {
+      const msg = e?.message || '';
+      // Réseau coupé / UploadThing injoignable : ce n'est pas un problème de jeton
+      if (/transport|timeout|ENOTFOUND|ECONN|EAI_AGAIN|fetch failed|network/i.test(msg)) {
+        this.logger.warn(`UploadThing injoignable au démarrage (${msg}) : nouvel essai à chaque envoi de photo.`);
+      } else this.alertConfig(msg || 'jeton refusé');
+    });
     this.timer = setInterval(() => this.cleanup().catch((e) => this.logger.warn(`Nettoyage des photos : ${e.message}`)), PENDING_TTL_MS);
     this.timer.unref();
   }

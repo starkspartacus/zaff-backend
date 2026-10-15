@@ -1,4 +1,5 @@
-import { IsString, IsNotEmpty, IsNumber, IsOptional, IsArray, IsBoolean, IsIn, MaxLength, Matches, Min } from 'class-validator';
+import { Type } from 'class-transformer';
+import { IsString, IsNotEmpty, IsNumber, IsOptional, IsArray, IsBoolean, IsIn, MaxLength, Matches, Min, ArrayNotEmpty, ArrayMaxSize, ValidateNested } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional, PartialType } from '@nestjs/swagger';
 
 export class CreateCategoryDto {
@@ -170,4 +171,32 @@ export class CreateVariantDto {
   @IsOptional()
   @MaxLength(40)
   color?: string;
+
+  @ApiPropertyOptional({ description: "Prix d'achat de cette version (sinon celui du modèle)" })
+  @IsNumber()
+  @Min(0, { message: 'Les prix ne peuvent pas être négatifs.' })
+  @IsOptional()
+  purchasePrice?: number;
+
+  @ApiPropertyOptional({ description: 'Prix de vente de cette version (sinon celui du modèle)' })
+  @IsNumber()
+  @Min(0, { message: 'Les prix ne peuvent pas être négatifs.' })
+  @IsOptional()
+  salePrice?: number;
+
+  @ApiPropertyOptional()
+  @IsNumber()
+  @Min(0, { message: 'Les prix ne peuvent pas être négatifs.' })
+  @IsOptional()
+  resellerPrice?: number;
+}
+
+export class CreateVariantsDto {
+  @ApiProperty({ type: [CreateVariantDto], description: 'Plusieurs versions du modèle, enregistrées en une fois' })
+  @IsArray()
+  @ArrayNotEmpty({ message: 'Ajoutez au moins une version.' })
+  @ArrayMaxSize(30, { message: '30 versions au maximum en une fois.' })
+  @ValidateNested({ each: true })
+  @Type(() => CreateVariantDto)
+  variants: CreateVariantDto[];
 }

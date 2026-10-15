@@ -141,7 +141,12 @@ export class CatalogService {
    * Reprend catégorie, marque, nom, prix, état, accessoires, suivi par N° de série et appareil du catalogue ;
    * la photo n'est reprise que pour la même couleur. Si la variante existe déjà dans la famille, elle est renvoyée.
    */
-  async createVariant(db: string, baseId: string, variant: { model?: string; color?: string }, actor?: CatalogActor) {
+  async createVariant(
+    db: string,
+    baseId: string,
+    variant: { model?: string; color?: string; purchasePrice?: number; salePrice?: number; resellerPrice?: number },
+    actor?: CatalogActor,
+  ) {
     const model = this.getProductModel(db);
     const base: any = await model.findById(baseId).lean().exec();
     if (!base) throw new NotFoundException('Modèle introuvable.');
@@ -153,7 +158,7 @@ export class CatalogService {
     if (same) return { product: same, created: false };
 
     const part = (v: string) => this.slugify(v).toUpperCase().replace(/-/g, '').slice(0, 8);
-    const root = [String(base.sku || 'PRD').split('-')[0], part(cap), part(color)].filter(Boolean).join('-');
+    const root = [part(base.brand || '') || 'PRD', this.slugify(base.name || '').toUpperCase().replace(/-/g, '').slice(0, 14), part(cap), part(color)].filter(Boolean).join('-');
     let sku = root;
     for (let i = 2; await model.findOne({ sku }).lean().exec(); i++) sku = `${root}-${i}`;
     const sameColorPhoto = key(color) === key(base.color) ? base.imageId || null : null;
@@ -167,9 +172,9 @@ export class CatalogService {
       brandId: base.brandId || undefined,
       model: cap || undefined,
       color: color || undefined,
-      purchasePrice: base.purchasePrice || 0,
-      salePrice: base.salePrice || 0,
-      resellerPrice: base.resellerPrice || 0,
+      purchasePrice: variant.purchasePrice ?? base.purchasePrice ?? 0,
+      salePrice: variant.salePrice ?? base.salePrice ?? 0,
+      resellerPrice: variant.resellerPrice ?? base.resellerPrice ?? 0,
       minStockAlert: base.minStockAlert || 0,
       condition: base.condition,
       accessories: base.accessories || undefined,
@@ -179,6 +184,13 @@ export class CatalogService {
     };
     const created = await this.createProduct(db, dto, actor);
     return { product: created, created: true };
+  }
+
+  /** Ajout multiple : plusieurs versions du même modèle en une fois (chacune sa fiche et son stock) */
+  async createVariants(db: string, baseId: string, variants: Array<{ model?: string; color?: string; purchasePrice?: number; salePrice?: number; resellerPrice?: number }>, actor?: CatalogActor) {
+    const results: Array<{ product: any; created: boolean }> = [];
+    for (const v of variants) results.push(await this.createVariant(db, baseId, v, actor));
+    return results;
   }
 
   async updateProduct(db: string, id: string, dto: UpdateProductDto, actor?: CatalogActor) {

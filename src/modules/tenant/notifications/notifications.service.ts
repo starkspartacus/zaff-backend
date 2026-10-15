@@ -24,6 +24,7 @@ const PUSH_URL: Record<string, string> = {
   'stock.count.closed': '/app/inventory',
   'codes.generated': '/app/labels',
   'stock.received': '/app/receptions',
+  'catalog.versions': '/app/catalog',
 };
 
 export interface NotifyInput {

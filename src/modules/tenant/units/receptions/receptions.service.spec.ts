@@ -38,6 +38,21 @@ describe('Réceptions de marchandise et variantes de modèle', () => {
     expect([again.created, String(again.product._id)]).toEqual([false, String(v1.product._id)]);
   });
 
+  it('ajout multiple : plusieurs versions avec leurs prix en une fois, doublon renvoyé sans être recréé', async () => {
+    const r: any[] = await catalog.createVariants(DB, String(ip64._id), [
+      { model: '128 Go', salePrice: 130000, purchasePrice: 110000 },
+      { model: '64 Go', color: 'Noir' },
+      { model: '64 Go', color: 'Rouge' },
+    ]);
+    expect(r.map((x) => [x.created, x.product.model, x.product.color, x.product.salePrice])).toEqual([
+      [true, '128 Go', 'Rouge', 130000],
+      [true, '64 Go', 'Noir', 110000],
+      [false, '64 Go', 'Rouge', 110000],
+    ]);
+    expect(new Set(r.map((x) => x.product.sku)).size).toBe(3);
+    expect(r[0].product.sku).toBe('APPLE-IPHONE11-128GO-ROUGE');
+  });
+
   it('une réception REC- : par catégorie → modèle, N° de série, valeur ; refusés gardés ; une seule notification', async () => {
     const v128: any = (await catalog.createVariant(DB, String(ip64._id), { model: '128 Go' })).product;
     const tab: any = await catalog.createProduct(DB, { name: 'iPad 10', sku: 'IPAD10', category: 'tablettes', brand: 'Apple', purchasePrice: 200000, salePrice: 250000, hasSerialNumbers: true } as any);

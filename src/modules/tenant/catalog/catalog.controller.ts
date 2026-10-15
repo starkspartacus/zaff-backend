@@ -1,7 +1,8 @@
 import { Controller, Get, Post, Put, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth, ApiQuery } from '@nestjs/swagger';
 import { CatalogService } from './catalog.service';
-import { CreateCategoryDto, CreateBrandDto, CreateProductDto, UpdateProductDto, CreateVariantDto, SetupHierarchyDto } from './dto/create-catalog.dto';
+import { NotificationsService } from '../notifications/notifications.service';
+import { CreateCategoryDto, CreateBrandDto, CreateProductDto, UpdateProductDto, CreateVariantDto, CreateVariantsDto, SetupHierarchyDto } from './dto/create-catalog.dto';
 import { JwtAuthGuard } from '../../../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../../../common/guards/tenant.guard';
 import { RolesGuard } from '../../../common/guards/roles.guard';
@@ -17,7 +18,10 @@ import { CurrentUser } from '../../../common/decorators/current-user.decorator';
 @Invalidates('products', 'stock', 'dashboard')
 @Controller('catalog')
 export class CatalogController {
-  constructor(private readonly catalogService: CatalogService) {}
+  constructor(
+    private readonly catalogService: CatalogService,
+    private readonly notifications: NotificationsService,
+  ) {}
 
   @Get('categories')
   @ApiOperation({ summary: 'Lister les catégories' })
@@ -69,6 +73,26 @@ export class CatalogController {
   @ApiOperation({ summary: 'Créer (ou retrouver) une variante du modèle : autre capacité / couleur, stock séparé' })
   createVariant(@CurrentTenant() tenant: any, @CurrentUser() user: any, @Param('id') id: string, @Body() dto: CreateVariantDto) {
     return this.catalogService.createVariant(tenant.databaseName, id, dto, { establishmentId: String(tenant._id), name: user?.name });
+  }
+
+  @Roles(Role.ADMIN, Role.STOREKEEPER)
+  @Post('products/:id/variants')
+  @ApiOperation({ summary: 'Ajout multiple : plusieurs versions (capacité / couleur / prix) du modèle en une fois' })
+  async createVariants(@CurrentTenant() tenant: any, @CurrentUser() user: any, @Param('id') id: string, @Body() dto: CreateVariantsDto) {
+    const results = await this.catalogService.createVariants(tenant.databaseName, id, dto.variants, { establishmentId: String(tenant._id), name: user?.name });
+    const created = results.filter((r) => r.created);
+    if (created.length && user?.role !== 'admin') {
+      await this.notifications.notify(tenant.databaseName, {
+        type: 'catalog.versions',
+        title: 'Nouvelles versions au catalogue',
+        message: `${user?.name || 'Un collaborateur'} a ajouté ${created.length} version(s) de ${created[0].product.name} : ${created.map((r) => [r.product.model, r.product.color].filter(Boolean).join(' ')).join(', ')}`,
+        level: 'info',
+        roles: ['admin'],
+        actorId: user?.userId,
+        data: { productIds: created.map((r) => String(r.product._id)) },
+      });
+    }
+    return results;
   }
 
   @Roles(Role.ADMIN, Role.STOREKEEPER)

@@ -68,7 +68,10 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   IMEI : `addUnits` le vide quand cet IMEI est mis en stock (il devient le N° de série de l'appareil).
 - **Variantes** `POST /catalog/products/:id/variant { model?, color? }` : même famille (catégorie + marque + nom), autre
   capacité / couleur = **fiche et stock séparés** (prix, état, appareil du catalogue repris ; photo reprise pour la même
-  couleur seulement ; SKU dérivé unique) ; une combinaison déjà existante est renvoyée (`created: false`), jamais dupliquée.
+  couleur seulement ; SKU `MARQUE-NOM-CAPACITE-COULEUR` unique) ; une combinaison déjà existante est renvoyée
+  (`created: false`), jamais dupliquée. Prix propres facultatifs (`purchasePrice`, `salePrice`, `resellerPrice`).
+  **Ajout multiple** `POST /catalog/products/:id/variants { variants[] }` (≤ 30) : toutes les versions en un appel ;
+  notification `catalog.versions` (→ admin) quand un collaborateur les ajoute.
 - **Réceptions (ravitaillements)** `stock_receptions` (`units/receptions/`) : `POST /stock-receptions { items[{ productId,
   serialNumbers[] }], note?, supplierName? }` (propriétaire, magasinier) = une réception `REC-<n>` pour tout le lot scanné,
   tous modèles confondus (`addUnits` par modèle, `silent`, mouvements liés à la réception) ; lignes catégorie → modèle →
