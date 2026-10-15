@@ -1,3 +1,5 @@
+// Doit rester le tout premier import : Web Crypto pour Node 18 (signature des envois UploadThing)
+import { NODE_MAJOR } from './common/webcrypto-polyfill';
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -10,6 +12,7 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
   const logger = new Logger('Bootstrap');
+  if (NODE_MAJOR < 20) logger.warn(`Node.js ${process.versions.node} : version ancienne, passez à Node 20 ou 22 (LTS). Web Crypto activé automatiquement.`);
 
   // Préfixe global d'API
   app.setGlobalPrefix('api');

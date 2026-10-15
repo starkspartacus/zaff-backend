@@ -254,6 +254,9 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   `StorageConfigError`) → la photo est gardée dans MongoDB (`storage: 'database'`) et le produit s'enregistre ; erreur claire
   au journal (10 min max) ; jeton vérifié au démarrage (forme V7 `uploadThingTokenProblem`, guillemets retirés, appel
   `usage()`), jeton inutilisable → MongoDB. Une vraie panne d'UploadThing reste une erreur.
+  ⚠️ « Invalid signing secret » vient le plus souvent de **Node.js ≤ 18 sans `globalThis.crypto`** (le SDK signe chaque envoi
+  avec `crypto.subtle`), pas du jeton : `src/common/webcrypto-polyfill.ts` (1er import de `main.ts`) l'installe ; Node < 20
+  signalé au démarrage. Production : Node 20 ou 22 LTS.
 - `GET /global/images?brand&model&color&category` (connecté) : photos du modèle, toutes boutiques, la couleur demandée
   d'abord puis les plus utilisées ; jamais les photos encore « en attente ». Clé du modèle **sans la marque en tête**
   (`modelKeyOf` : « Samsung Galaxy A55 » = « Galaxy A55 »). `GET /global/images/:id/file` : **public** (balise `<img>`) —

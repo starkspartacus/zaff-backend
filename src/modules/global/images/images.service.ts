@@ -232,9 +232,14 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
   private alertConfig(reason: string) {
     if (Date.now() - this.lastConfigAlert < 10 * 60_000) return;
     this.lastConfigAlert = Date.now();
+    const signing = /signing secret/i.test(reason);
     this.logger.error(
-      `UploadThing refuse UPLOADTHING_TOKEN (${reason}). Photos gardées dans MongoDB en attendant : ` +
-        'régénérez le jeton V7 (Dashboard UploadThing > API Keys), mettez-le dans .env sans guillemets, puis redémarrez.',
+      signing
+        ? `UploadThing : signature de l'envoi impossible sur ce serveur (« ${reason} », Node.js ${process.versions.node}). ` +
+            'Ce n\'est en général PAS le jeton : mettez à jour le serveur (git pull, npm run build) et utilisez Node 20 ou 22. ' +
+            'Photos gardées dans MongoDB en attendant.'
+        : `UploadThing refuse UPLOADTHING_TOKEN (${reason}). Photos gardées dans MongoDB en attendant : ` +
+            'régénérez le jeton V7 (Dashboard UploadThing > API Keys), mettez-le dans .env sans guillemets, puis redémarrez.',
     );
   }
 
