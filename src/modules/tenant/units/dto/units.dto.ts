@@ -79,6 +79,14 @@ export class SellUnitDto {
   @Min(0)
   @IsOptional()
   warrantyMonths?: number;
+
+  @ApiPropertyOptional({
+    enum: ['scan', 'manual', 'owner_override'],
+    description: "Confirmation de l'appareil : scanné, N° retapé à la main (étiquette illisible), ou validé sans contrôle par le propriétaire",
+  })
+  @IsIn(['scan', 'manual', 'owner_override'])
+  @IsOptional()
+  confirmation?: 'scan' | 'manual' | 'owner_override';
 }
 
 export class UpdateUnitStatusDto {

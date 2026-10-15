@@ -62,6 +62,9 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   réceptions fournisseurs refusés / ignorés pour ces produits.
 - Vente : réservation **atomique** (`findOneAndUpdate` sur `status: in_stock`) + décrément conditionnel du stock,
   avec rollback de tout ce qui a été fait si une ligne échoue. Ne jamais remplacer par un « lire puis écrire ».
+- **Vente confirmée par l'article** : `POST /units/sell { confirmation: 'scan' | 'manual' | 'owner_override' }` gardé sur la vente
+  (`Sale.confirmation`) ; `owner_override` (sans contrôle) refusé à un vendeur. Client (nom / téléphone, E.164) → client créé
+  ou retrouvé et **garantie `warranties` liée à la vente** (`warrantyMonths`, défaut de la politique côté écran).
 - Un code scanné est résolu par `GET /units/lookup/:code` : N° de série d'une unité, sinon code-barres d'un modèle.
 - **Code-barres du modèle = celui de la BOÎTE**, jamais un IMEI : `assertBarcodeFree` refuse un IMEI valide (`common/imei.ts`)
   ou le N° de série d'un appareil existant (seulement si le code-barres change). Ancienne fiche dont le code-barres est un

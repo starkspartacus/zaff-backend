@@ -117,6 +117,10 @@ export class Sale {
   /** Clôture de caisse qui inclut cette vente (null = pas encore clôturée) */
   @Prop({ type: Types.ObjectId, default: null, index: true })
   closingId: Types.ObjectId;
+
+  /** Vente par scan : appareil confirmé par un scan (`scan`), par le N° retapé (`manual`) ou sans contrôle par le propriétaire (`owner_override`) */
+  @Prop({ default: null })
+  confirmation: string;
 }
 
 export const SaleSchema = SchemaFactory.createForClass(Sale);

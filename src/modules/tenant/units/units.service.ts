@@ -3,6 +3,7 @@ import { Types } from 'mongoose';
 import { TenantConnectionService } from '../../../database/tenant-connection.service';
 import { Product, ProductSchema } from '../common/schemas/product.schema';
 import { ProductUnit, ProductUnitSchema } from '../common/schemas/product-unit.schema';
+import { Sale, SaleSchema } from '../common/schemas/sale.schema';
 import { StockMovement, StockMovementSchema } from '../common/schemas/stock-movement.schema';
 import { StockMovementType, StockReferenceType } from '../../../common/enums/stock-movement.enum';
 import { UnitStatus } from '../../../common/enums/unit-status.enum';
@@ -27,6 +28,7 @@ export class UnitsService {
 
   private getUnitModel(db: string) { return this.tenantConnectionService.getModel<ProductUnit>(db, ProductUnit.name, ProductUnitSchema); }
   private getProductModel(db: string) { return this.tenantConnectionService.getModel<Product>(db, Product.name, ProductSchema); }
+  private getSaleModel(db: string) { return this.tenantConnectionService.getModel<Sale>(db, Sale.name, SaleSchema); }
   private getStockMovementModel(db: string) { return this.tenantConnectionService.getModel<StockMovement>(db, StockMovement.name, StockMovementSchema); }
 
   async findAll(db: string, filter: { productId?: string; status?: string; search?: string; limit?: number }) {
@@ -176,6 +178,10 @@ export class UnitsService {
     const product = await this.getProductModel(db).findById(unit.productId);
     if (!product) throw new NotFoundException('Le produit de cet appareil n\'existe plus.');
 
+    // Seul le propriétaire peut valider une vente sans avoir scanné l'appareil
+    if (dto.confirmation === 'owner_override' && actor.role !== 'admin') {
+      throw new BadRequestException("Scannez l'appareil pour confirmer la vente (seul le propriétaire peut valider sans scan).");
+    }
     const unitPrice = dto.unitPrice ?? product.salePrice;
     const warrantyMonths = dto.warrantyMonths ?? 0;
 
@@ -210,6 +216,10 @@ export class UnitsService {
       { country },
     );
 
+    if (dto.confirmation) {
+      await this.getSaleModel(db).updateOne({ _id: (sale as any)._id }, { $set: { confirmation: dto.confirmation } });
+      (sale as any).confirmation = dto.confirmation;
+    }
     const soldUnit = await this.getUnitModel(db).findById(unit._id).populate('productId');
     return { sale, unit: soldUnit };
   }
