@@ -9,6 +9,7 @@ import { ProductUnit, ProductUnitSchema } from '../common/schemas/product-unit.s
 import { CreateCategoryDto, CreateBrandDto, CreateProductDto, SetupHierarchyDto, UpdateProductDto } from './dto/create-catalog.dto';
 import { StockMovement, StockMovementSchema } from '../common/schemas/stock-movement.schema';
 import { StockMovementType, StockReferenceType } from '../../../common/enums/stock-movement.enum';
+import { isValidImei } from '../../../common/imei';
 
 export interface CatalogActor {
   /** Boutique (base globale) : une photo privée d'une autre boutique est refusée */
@@ -94,8 +95,19 @@ export class CatalogService {
     return model.find(query).sort({ name: 1 }).exec();
   }
 
-  private async assertBarcodeFree(db: string, barcode: string | undefined, exceptId?: string) {
+  private async assertBarcodeFree(db: string, barcode: string | undefined, exceptId?: string, current?: string | null) {
     if (!barcode) return;
+    // Le code-barres du modèle est celui de la BOÎTE (commun à tous les appareils du modèle), jamais un IMEI / N° de série
+    if (barcode.trim() !== (current || '')) {
+      const code = barcode.trim();
+      const unit = await this.getUnitModel(db).findOne({ serialNumber: code.replace(/\s+/g, '').toUpperCase() }).lean().exec();
+      if (isValidImei(code) || unit) {
+        throw new BadRequestException(
+          `« ${code} » est ${unit ? 'le N° de série d\'un appareil déjà en stock' : 'un IMEI (propre à un seul téléphone)'}, pas le code-barres du modèle. ` +
+            'Laissez le code-barres vide (ou scannez celui de la boîte) et scannez cet IMEI à la mise en stock.',
+        );
+      }
+    }
     const other = await this.getProductModel(db).findOne({ barcode: barcode.trim() });
     if (other && String(other._id) !== exceptId) {
       throw new ConflictException(`Le code-barres '${barcode}' est déjà utilisé par '${other.name}'.`);
@@ -128,7 +140,7 @@ export class CatalogService {
     const model = this.getProductModel(db);
     const product = await model.findById(id);
     if (!product) throw new NotFoundException('Produit non trouvé.');
-    await this.assertBarcodeFree(db, dto.barcode, id);
+    await this.assertBarcodeFree(db, dto.barcode, id, product.barcode);
 
     const update: any = { ...dto };
     const willBeSerial = dto.hasSerialNumbers ?? product.hasSerialNumbers;

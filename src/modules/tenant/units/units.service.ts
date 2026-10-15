@@ -143,6 +143,8 @@ export class UnitsService {
       );
       stockQuantity = updated?.stockQuantity ?? stockQuantity + created.length;
       const serials = created.map((u) => u.serialNumber);
+      // Réparation : un IMEI saisi par erreur comme « code-barres du modèle » devient le N° de série de l'appareil
+      await this.getProductModel(db).updateMany({ barcode: { $in: serials } }, { $set: { barcode: null } });
       await this.getStockMovementModel(db).create({
         productId: product._id,
         movementType: StockMovementType.IN,

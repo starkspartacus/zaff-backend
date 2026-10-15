@@ -63,6 +63,9 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 - Vente : réservation **atomique** (`findOneAndUpdate` sur `status: in_stock`) + décrément conditionnel du stock,
   avec rollback de tout ce qui a été fait si une ligne échoue. Ne jamais remplacer par un « lire puis écrire ».
 - Un code scanné est résolu par `GET /units/lookup/:code` : N° de série d'une unité, sinon code-barres d'un modèle.
+- **Code-barres du modèle = celui de la BOÎTE**, jamais un IMEI : `assertBarcodeFree` refuse un IMEI valide (`common/imei.ts`)
+  ou le N° de série d'un appareil existant (seulement si le code-barres change). Ancienne fiche dont le code-barres est un
+  IMEI : `addUnits` le vide quand cet IMEI est mis en stock (il devient le N° de série de l'appareil).
 - Produit **sans** N° de série : mouvements `POST /stock/movements` (propriétaire, magasinier) **atomiques** (`$inc` conditionnel,
   jamais « lire puis écrire »), quantité entière ≥ 0 ; ajustement = nouveau stock compté (`quantity`), écart dans la note.
   Stock saisi dans la fiche produit (création, modification) → mouvement tracé. `PUT /catalog/products/:id` validé
