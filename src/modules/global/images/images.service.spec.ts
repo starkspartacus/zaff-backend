@@ -67,10 +67,23 @@ describe("Photos partagées : UploadThing, sans fichier orphelin", () => {
     expect(doc(img.id)).toMatchObject({ storage: 'database', storageKey: null, url: null });
     const f = await images.file(img.id);
     expect([f.url, Buffer.from(f.data!).length]).toEqual([null, 204]);
-    // Une vraie panne (pas un problème de jeton) reste une erreur
+    // Panne réseau d'UploadThing : la photo est gardée aussi (jamais perdue)
     ut.badToken = false;
     ut.failNext = true;
-    await expect(images.upload(file(10), meta, shopA)).rejects.toThrow(/indisponible/);
+    const down = await images.upload(file(10), meta, shopA);
+    expect(doc(down.id)).toMatchObject({ storage: 'database' });
+  });
+
+  it('photos gardées dans MongoDB renvoyées chez UploadThing dès qu\'il répond, même adresse publique', async () => {
+    ut.badToken = true;
+    const img = await images.upload(file(11), meta, shopA, { thumb: { buffer: jpeg(4), size: 204 } });
+    await images.attach(img.id);
+    expect(await images.pushToRemote()).toBe(0); // toujours refusé
+    ut.badToken = false;
+    expect(await images.pushToRemote()).toBe(1);
+    expect(doc(img.id)).toMatchObject({ storage: 'uploadthing', data: null, thumbData: null });
+    expect((await images.file(img.id)).url).toMatch(/^https:\/\/app\.ufs\.sh\/f\//);
+    expect(ut.files.size).toBe(2);
   });
 
   it('jeton UploadThing : guillemets retirés, jeton incomplet expliqué sans être affiché', () => {
@@ -139,10 +152,11 @@ describe("Photos partagées : UploadThing, sans fichier orphelin", () => {
     await expect(catalog.createProduct('db1', { name: 'Y', sku: 'Y', category: 'smartphones', purchasePrice: 0, salePrice: 1, imageId: new Types.ObjectId().toString() } as any)).rejects.toThrow(/n'existe plus/);
   });
 
-  it("panne d'UploadThing : message clair, aucune fiche créée", async () => {
+  it("panne d'UploadThing : la photo n'est pas perdue (gardée dans MongoDB, aucun fichier distant)", async () => {
     ut.failNext = true;
-    await expect(images.upload(file(5), meta, shopA)).rejects.toThrow(/indisponible/);
-    expect(model.docs).toHaveLength(0);
+    const img = await images.upload(file(5), meta, shopA);
+    expect(model.docs).toHaveLength(1);
+    expect([doc(img.id).storage, ut.files.size]).toEqual(['database', 0]);
   });
 
   it('photothèque (import en masse) : gardée sans produit ; suppression refusée si utilisée', async () => {
@@ -178,7 +192,7 @@ describe("Photos partagées : UploadThing, sans fichier orphelin", () => {
     const later = Date.now() + PENDING_TTL_MS + 1000;
     for (const f of ut.files.values()) (f as any).uploadedAt = Math.min(f.uploadedAt, later - PENDING_TTL_MS - 10);
 
-    expect(await images.cleanup(later)).toEqual({ pending: 1, remote: 1 });
+    expect(await images.cleanup(later)).toEqual({ pending: 1, remote: 1, pushed: 0 });
     expect(doc(abandoned.id)).toBeUndefined();
     expect(doc(kept.id)).toBeDefined();
     expect(doc(lib.id)).toBeDefined();

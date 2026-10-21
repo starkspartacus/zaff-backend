@@ -78,7 +78,7 @@ export class PhotoStudioService {
   private readonly logger = new Logger(PhotoStudioService.name);
   private readonly usage = new Map<string, number[]>();
   /** Au-delà, on continue sans l'IA (réglable dans les tests) */
-  aiTimeoutMs = 20_000;
+  aiTimeoutMs = 10_000;
 
   constructor(@Optional() @Inject(AI_CLIENT) private readonly ai?: AiClient) {}
 
@@ -93,7 +93,7 @@ export class PhotoStudioService {
     return true;
   }
 
-  /** Cadre de l'appareil demandé à l'IA (coordonnées 0–1000), jamais bloquant : sans réponse en 20 s, on continue sans */
+  /** Cadre de l'appareil demandé à l'IA (coordonnées 0–1000), jamais bloquant : sans réponse en 10 s, on continue sans */
   private async locate(jpeg: Buffer, meta: StudioMeta): Promise<AiBox | null> {
     const expected = [meta.brand, meta.model, meta.color].filter(Boolean).join(' ') || 'an electronic device';
     const prompt = [

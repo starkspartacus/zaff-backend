@@ -179,15 +179,16 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
     }
 
     const baseName = imageKey(`${meta.brand} ${meta.model} ${meta.color || ''}`).replace(/ /g, '-');
-    // UploadThing refuse nos identifiants : la photo est gardée dans MongoDB (le produit s'enregistre quand même)
+    // UploadThing refuse ou ne répond pas : la photo est gardée dans MongoDB (le produit s'enregistre quand même)
+    // et repartira toute seule chez UploadThing au prochain passage du nettoyage horaire (`pushToRemote`)
     let inDatabase = this.storage.name === 'database';
     let stored: { key: string | null; url: string | null } = { key: null, url: null };
     if (!inDatabase) {
       try {
         stored = await this.storage.put(file.buffer, { name: `${baseName}.${EXT[mime]}`, mime, customId: `${CUSTOM_ID_PREFIX}${sha256}` });
       } catch (e) {
-        if (!(e instanceof StorageConfigError)) throw e;
-        this.alertConfig(e.message);
+        if (e instanceof StorageConfigError) this.alertConfig(e.message);
+        else this.logger.warn(`UploadThing indisponible (${(e as Error).message}) : photo gardée dans MongoDB, renvoyée plus tard.`);
         inDatabase = true;
       }
     }
@@ -195,7 +196,10 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
     const thumbMime = thumb ? sniffImage(thumb.buffer)! : null;
     try {
       if (thumb && thumbMime && !inDatabase) {
-        storedThumb = await this.storage.put(thumb.buffer, { name: `${baseName}-vignette.${EXT[thumbMime]}`, mime: thumbMime, customId: `${CUSTOM_ID_PREFIX}${sha256}-t` });
+        // Vignette refusée : elle reste dans MongoDB, la photo principale est déjà chez UploadThing
+        storedThumb = await this.storage
+          .put(thumb.buffer, { name: `${baseName}-vignette.${EXT[thumbMime]}`, mime: thumbMime, customId: `${CUSTOM_ID_PREFIX}${sha256}-t` })
+          .catch(() => ({ key: null, url: null }));
       }
       const created = await this.model.create({
         category: meta.category || null,
@@ -212,7 +216,7 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
         storageKey: stored.key,
         url: stored.url,
         bytes: file.size,
-        thumbData: thumb && inDatabase ? thumb.buffer : null,
+        thumbData: thumb && (inDatabase || !storedThumb.url) ? thumb.buffer : null,
         thumbKey: storedThumb.key,
         thumbUrl: storedThumb.url,
         thumbBytes: thumb?.size || 0,
@@ -341,8 +345,52 @@ export class ImagesService implements OnApplicationBootstrap, OnModuleDestroy {
         remote = orphans.length;
       }
     }
-    if (pending || remote) this.logger.log(`Nettoyage : ${pending} photo(s) abandonnée(s), ${remote} fichier(s) orphelin(s) supprimé(s)`);
-    return { pending, remote };
+    const pushed = await this.pushToRemote().catch(() => 0);
+    if (pending || remote || pushed) this.logger.log(`Nettoyage : ${pending} photo(s) abandonnée(s), ${remote} fichier(s) orphelin(s) supprimé(s), ${pushed} photo(s) envoyée(s) chez UploadThing`);
+    return { pending, remote, pushed };
+  }
+
+  /**
+   * Photos gardées dans MongoDB pendant une panne / un mauvais jeton UploadThing : renvoyées chez UploadThing dès qu'il
+   * répond (30 par passage, arrêt à la première erreur). L'adresse publique `/global/images/:id/file` ne change pas.
+   */
+  async pushToRemote(limit = 30) {
+    // Binaire MongoDB (Binary.buffer), Buffer, ou copie JSON { type: 'Buffer', data: [...] }
+    const toBuf = (v: any): Buffer =>
+      Buffer.isBuffer(v) ? v : Buffer.isBuffer(v?.buffer) ? v.buffer : Array.isArray(v?.data) ? Buffer.from(v.data) : Buffer.from(v?.buffer ?? v);
+    if (this.storage.name !== 'uploadthing') return 0;
+    const docs: any[] = await this.model.find({ storage: 'database', pending: false }).select('+data +thumbData').limit(limit).lean().exec();
+    let done = 0;
+    for (const d of docs) {
+      if (!d.data) continue;
+      const base = imageKey(`${d.brand} ${d.model} ${d.color || ''}`).replace(/ /g, '-') || 'photo';
+      let main: { key: string | null; url: string | null };
+      try {
+        main = await this.storage.put(toBuf(d.data), { name: `${base}.${EXT[d.mime] || 'webp'}`, mime: d.mime, customId: `${CUSTOM_ID_PREFIX}${d.sha256}` });
+      } catch {
+        break; // toujours indisponible : on réessaiera dans une heure
+      }
+      const thumbMime = d.thumbData ? sniffImage(toBuf(d.thumbData)) : null;
+      const t = d.thumbData && thumbMime
+        ? await this.storage
+            .put(toBuf(d.thumbData), { name: `${base}-vignette.${EXT[thumbMime]}`, mime: thumbMime, customId: `${CUSTOM_ID_PREFIX}${d.sha256}-t` })
+            .catch(() => null)
+        : null;
+      await this.model.updateOne(
+        { _id: d._id, storage: 'database' },
+        {
+          $set: {
+            storage: 'uploadthing',
+            storageKey: main.key,
+            url: main.url,
+            data: null,
+            ...(t ? { thumbKey: t.key, thumbUrl: t.url, thumbData: null } : {}),
+          },
+        },
+      );
+      done++;
+    }
+    return done;
   }
 
   /**

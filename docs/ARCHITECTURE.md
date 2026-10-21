@@ -259,7 +259,10 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   `dev:memory`). La fiche garde `storage`, `storageKey`, `url`. **Jeton refusé** (« Invalid signing secret », 401…,
   `StorageConfigError`) → la photo est gardée dans MongoDB (`storage: 'database'`) et le produit s'enregistre ; erreur claire
   au journal (10 min max) ; jeton vérifié au démarrage (forme V7 `uploadThingTokenProblem`, guillemets retirés, appel
-  `usage()`), jeton inutilisable → MongoDB. Une vraie panne d'UploadThing reste une erreur.
+  `usage()`), jeton inutilisable → MongoDB. **Toute** panne d'UploadThing (réseau, « Failed to upload file »…) → photo gardée
+  dans MongoDB aussi (jamais perdue, le produit s'enregistre) ; vignette refusée → gardée dans MongoDB. **`pushToRemote`**
+  (dans le nettoyage horaire) renvoie ces photos chez UploadThing dès qu'il répond (30 par passage, arrêt à la 1re erreur) ;
+  l'adresse `/global/images/:id/file` ne change pas. Studio photo : IA de recadrage attendue 10 s au plus.
   ⚠️ « Invalid signing secret » vient le plus souvent de **Node.js ≤ 18 sans `globalThis.crypto`** (le SDK signe chaque envoi
   avec `crypto.subtle`), pas du jeton : `src/common/webcrypto-polyfill.ts` (1er import de `main.ts`) l'installe ; Node < 20
   signalé au démarrage. Production : Node 20 ou 22 LTS.
