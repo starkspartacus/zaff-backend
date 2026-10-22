@@ -14,6 +14,7 @@ import {
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PaymentMethod } from '../../../../common/enums/payment-method.enum';
 import { UnitStatus } from '../../../../common/enums/unit-status.enum';
+import { SaleType } from '../../../../common/enums/sale-type.enum';
 
 export class AddUnitsDto {
   @ApiProperty({ description: 'Modèle (produit) auquel rattacher les appareils' })
@@ -87,6 +88,28 @@ export class SellUnitDto {
   @IsIn(['scan', 'manual', 'owner_override'])
   @IsOptional()
   confirmation?: 'scan' | 'manual' | 'owner_override';
+
+  @ApiPropertyOptional({ description: 'Client déjà enregistré (revendeur, client fidèle)' })
+  @IsString()
+  @IsOptional()
+  customerId?: string;
+
+  @ApiPropertyOptional({ enum: SaleType, default: SaleType.PURCHASE, description: 'reseller = tarif revendeur (client revendeur obligatoire)' })
+  @IsEnum(SaleType)
+  @IsOptional()
+  saleType?: SaleType;
+
+  @ApiPropertyOptional({ description: 'Vente à crédit : acompte versé maintenant' })
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  @IsOptional()
+  depositAmount?: number;
+
+  @ApiPropertyOptional({ enum: ['cash', 'mobile', 'card', 'bank_transfer'] })
+  @IsIn(['cash', 'mobile', 'card', 'bank_transfer'])
+  @IsOptional()
+  depositMethod?: string;
 }
 
 export class UpdateUnitStatusDto {

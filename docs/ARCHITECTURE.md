@@ -65,6 +65,9 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 - **Vente confirmée par l'article** : `POST /units/sell { confirmation: 'scan' | 'manual' | 'owner_override' }` gardé sur la vente
   (`Sale.confirmation`) ; `owner_override` (sans contrôle) refusé à un vendeur. Client (nom / téléphone, E.164) → client créé
   ou retrouvé et **garantie `warranties` liée à la vente** (`warrantyMonths`, défaut de la politique côté écran).
+  **Revendeur par scan** : `customerId` + `saleType: reseller` → tarif revendeur (`resellerPrice`, sinon prix public) fixé par
+  `SalesService.create` (le prix n'est plus calculé dans `sell`) ; `paymentMethod: credit` + `depositAmount` / `depositMethod`
+  possibles. Client non revendeur (choisi, ou retrouvé par son numéro) → refus du tarif revendeur.
 - Un code scanné est résolu par `GET /units/lookup/:code` : N° de série d'une unité, sinon code-barres d'un modèle.
 - **Code-barres du modèle = celui de la BOÎTE**, jamais un IMEI : `assertBarcodeFree` refuse un IMEI valide (`common/imei.ts`)
   ou le N° de série d'un appareil existant (seulement si le code-barres change). Ancienne fiche dont le code-barres est un
@@ -81,6 +84,11 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
   N° de série, `unitCost`, `totalUnits`, `totalValue`, `byCategory`, refusés gardés ; **une** notification `stock.received`
   (→ admin : « Téléphones 20, Tablettes 4 »). La réception d'une commande fournisseur y est aussi enregistrée (`source:
   purchase_order`, `orderCode`, sans 2e notification). `GET /stock-receptions?from&to&category`, `GET /:id`. Scope `receptions`.
+- **Stock par modèle et capacité** `GET /stock/models?days=30` (toute l'équipe ; `buildStockModels`, `stock/stock-models.ts`,
+  fonction pure) : familles (catégorie + marque + `name` normalisés) → versions (capacité `model`, couleur, état), triées
+  Go < To ; par version : vendables, en dépôt, atelier, défectueux, vendus sur la période, couverture (jours de vente),
+  âge moyen / plus ancien, dormants (≥ 60 j, `AGING_DAYS`), statut `out | low | ok`, quantité à racheter (30 jours de vente) ;
+  résumé par capacité (dispo, « dès » prix, coloris). **Vendeur : jamais `purchasePrice` ni `value`.**
 - Produit **sans** N° de série : mouvements `POST /stock/movements` (propriétaire, magasinier) **atomiques** (`$inc` conditionnel,
   jamais « lire puis écrire »), quantité entière ≥ 0 ; ajustement = nouveau stock compté (`quantity`), écart dans la note.
   Stock saisi dans la fiche produit (création, modification) → mouvement tracé. `PUT /catalog/products/:id` validé
@@ -130,6 +138,12 @@ Jamais de donnée d'une boutique dans une autre ; toujours passer `@CurrentTenan
 - **Caisse** : la part d'une vente payée par avoir n'est pas comptée comme encaissée ; les remboursements donnés par
   le collaborateur sont déduits de ses espèces / Mobile Money à remettre (`refunds` dans la clôture).
 - Tableau de bord : retours de la période déduits (`sales.returns`, `sales.netRevenue`).
+
+## Ticket de caisse (`GET /sales/:id/receipt`, propriétaire et vendeur)
+- `ContractsService.receipt` : boutique (nom, raison sociale, adresse, téléphone, RCCM / N° contribuable du contrat), vente
+  (N°, date, vendeur, client / revendeur, sous-total, remise, total, avoir, mode, montant remis et monnaie rendue, acompte,
+  reste à payer, retours), lignes (N° de série, fin de garantie `effectiveWarrantyEnd`, `verifyCode` du QR) et délai de retour.
+  Montants **enregistrés** par le serveur : l'écran ne recalcule rien. Imprimé en 58 / 80 mm par le frontend.
 
 ## Contrat de vente et garantie (`contracts/`)
 - Remis au client **après chaque vente** : `GET /sales/:id/contract` (propriétaire, vendeur) renvoie le document prêt à

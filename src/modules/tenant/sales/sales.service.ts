@@ -193,6 +193,12 @@ export class SalesService {
       }
     } else if (reseller && !dto.customerName?.trim() && !dto.customerPhone?.trim()) {
       throw new BadRequestException('Une vente au tarif revendeur doit être faite à un revendeur : choisissez-le.');
+    } else if (reseller && dto.customerPhone?.trim()) {
+      // Client déjà connu par son numéro mais pas revendeur : pas de tarif revendeur
+      const known = await custModel.findOne({ phone: dto.customerPhone.trim() });
+      if (known && !known.isReseller) {
+        throw new BadRequestException(`${known.name} n'est pas enregistré comme revendeur : le tarif revendeur ne s'applique pas.`);
+      }
     } else if (onCredit && !dto.customerName?.trim() && !dto.customerPhone?.trim()) {
       throw new BadRequestException('Une vente à crédit doit être faite à un client (nom ou téléphone) : il devra payer le reste.');
     }

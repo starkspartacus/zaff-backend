@@ -182,12 +182,14 @@ export class UnitsService {
     if (dto.confirmation === 'owner_override' && actor.role !== 'admin') {
       throw new BadRequestException("Scannez l'appareil pour confirmer la vente (seul le propriétaire peut valider sans scan).");
     }
-    const unitPrice = dto.unitPrice ?? product.salePrice;
+    // Prix : négocié, sinon celui du catalogue (tarif revendeur pour un revendeur) — fixé par SalesService.create
+    const reseller = dto.saleType === SaleType.RESELLER;
     const warrantyMonths = dto.warrantyMonths ?? 0;
 
     const sale = await this.salesService.create(
       db,
       {
+        customerId: dto.customerId,
         customerName: dto.customerName,
         customerPhone: dto.customerPhone,
         items: [
@@ -197,21 +199,23 @@ export class UnitsService {
             productSku: product.sku,
             productCategory: product.category,
             quantity: 1,
-            unitPrice,
-            total: unitPrice,
+            unitPrice: dto.unitPrice as number,
+            total: 0,
             serialNumber,
             warrantyEnabled: warrantyMonths > 0,
             warrantyMonths,
           },
         ],
-        subtotal: unitPrice,
+        subtotal: 0,
         discount: 0,
-        total: unitPrice,
+        total: 0,
         paidAmount: dto.paidAmount,
         paymentMethod: dto.paymentMethod || PaymentMethod.CASH,
-        saleType: SaleType.PURCHASE,
+        saleType: reseller ? SaleType.RESELLER : SaleType.PURCHASE,
+        depositAmount: dto.depositAmount,
+        depositMethod: dto.depositMethod,
         creditNoteCode: dto.creditNoteCode,
-      },
+      } as any,
       actor,
       { country },
     );

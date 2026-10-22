@@ -198,6 +198,75 @@ export class ContractsService {
   }
 
   /**
+   * Ticket de caisse thermique (58 / 80 mm) : tout ce qu'il faut imprimer, calculé par le serveur
+   * (montants enregistrés, fin de garantie de chaque appareil, QR de vérification).
+   */
+  async receipt(tenant: any, saleId: string) {
+    const db = tenant.databaseName;
+    if (!Types.ObjectId.isValid(saleId)) throw new NotFoundException('Vente non trouvée.');
+    const sale: any = await this.sales(db).findById(saleId).populate('customerId').exec();
+    if (!sale) throw new NotFoundException('Vente non trouvée.');
+    const policy = resolveReturnPolicy(tenant.settings);
+    const warranties: any[] = await this.warranties(db).find({ saleId: sale._id }).exec();
+    const legal = this.getSettings(tenant).legal;
+    const shop = this.shopOf(tenant);
+    const c: any = sale.customerId;
+    const creditNote = sale.creditNoteAmount || 0;
+    const toPay = Math.max(0, sale.total - creditNote);
+    const isCredit = sale.paymentMethod === 'credit';
+    const given = !isCredit && sale.paidAmount != null && sale.paidAmount > toPay ? sale.paidAmount : null;
+    return {
+      shop: {
+        name: shop.name,
+        legalName: legal.legalName || null,
+        address: shop.address,
+        phone: shop.phone,
+        rccm: legal.rccm || null,
+        taxId: legal.taxId || null,
+        currency: shop.currency,
+      },
+      sale: {
+        id: String(sale._id),
+        invoiceNumber: sale.invoiceNumber,
+        date: iso(sale.saleDate),
+        sellerName: sale.sellerName || null,
+        saleType: sale.saleType || 'purchase',
+        customer: c ? { name: c.name || null, phone: c.phone || null, isReseller: !!c.isReseller } : null,
+        subtotal: sale.subtotal,
+        discount: sale.discount || 0,
+        total: sale.total,
+        creditNoteCode: sale.creditNoteCode || null,
+        creditNoteAmount: creditNote,
+        paymentMethod: sale.paymentMethod,
+        paymentLabel: paymentLabel(sale.paymentMethod),
+        amountGiven: given,
+        change: given != null ? given - toPay : 0,
+        depositAmount: sale.depositAmount || 0,
+        depositLabel: sale.depositMethod ? paymentLabel(sale.depositMethod) : null,
+        amountDue: sale.amountDue || 0,
+        returnedAmount: sale.returnedAmount || 0,
+      },
+      items: sale.items.map((i: any, line: number) => {
+        const w = warranties.find((x) => (i.serialNumber ? x.serialNumber === i.serialNumber : String(x.productId) === String(i.productId)));
+        const end = i.serialNumber || w ? effectiveWarrantyEnd(policy, new Date(sale.saleDate), w?.warrantyEnd || null) : null;
+        return {
+          productName: i.productName,
+          serialNumber: i.serialNumber || null,
+          quantity: i.quantity,
+          unitPrice: i.unitPrice,
+          total: i.total,
+          warrantyEnd: iso(end),
+          verifyCode: i.serialNumber && this.codes && line < 256 ? this.codes.encode(tenant._id, sale._id, line) : null,
+        };
+      }),
+      policy: {
+        returnWindowDays: policy.returnsEnabled ? policy.returnWindowDays : 0,
+        exchangeWindowDays: policy.defective.exchangeWindowDays,
+      },
+    };
+  }
+
+  /**
    * Vérification publique d'une garantie (QR code de la fiche) : uniquement l'appareil, la boutique et
    * l'état de la garantie — jamais le client, le prix ni le N° de série complet.
    */

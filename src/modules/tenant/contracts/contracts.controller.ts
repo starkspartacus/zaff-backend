@@ -45,4 +45,11 @@ export class ContractsController {
   forSale(@CurrentTenant() tenant: any, @Param('id') id: string) {
     return this.contracts.forSale(tenant, id);
   }
+
+  @Get('sales/:id/receipt')
+  @Roles(Role.ADMIN, Role.SELLER)
+  @ApiOperation({ summary: 'Ticket de caisse thermique (58 / 80 mm) de cette vente' })
+  receipt(@CurrentTenant() tenant: any, @Param('id') id: string) {
+    return this.contracts.receipt(tenant, id);
+  }
 }

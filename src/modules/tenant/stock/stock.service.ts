@@ -5,6 +5,10 @@ import { StockMovement, StockMovementSchema } from '../common/schemas/stock-move
 import { Product, ProductSchema } from '../common/schemas/product.schema';
 import { CreateStockMovementDto } from './dto/create-stock-movement.dto';
 import { StockMovementType } from '../../../common/enums/stock-movement.enum';
+import { ProductUnit, ProductUnitSchema } from '../common/schemas/product-unit.schema';
+import { Sale, SaleSchema } from '../common/schemas/sale.schema';
+import { UnitStatus } from '../../../common/enums/unit-status.enum';
+import { buildStockModels } from './stock-models';
 
 @Injectable()
 export class StockService {
@@ -27,6 +31,26 @@ export class StockService {
       lowStockProducts: lowStock,
       products,
     };
+  }
+
+  /** Stock par modèle et capacité : familles → versions, vendable / dehors, rythme de vente, âge du stock */
+  async byModel(db: string, opts: { days?: number; showCosts: boolean }) {
+    const periodDays = Math.min(Math.max(Math.round(opts.days || 30), 7), 365);
+    const since = new Date(Date.now() - periodDays * 24 * 3600 * 1000);
+    const units = this.tenantConnectionService.getModel<ProductUnit>(db, ProductUnit.name, ProductUnitSchema);
+    const sales = this.tenantConnectionService.getModel<Sale>(db, Sale.name, SaleSchema);
+    const [products, open, recent] = await Promise.all([
+      this.getProductModel(db).find().lean().exec(),
+      units
+        .find({ status: { $in: [UnitStatus.IN_STOCK, UnitStatus.CONSIGNED, UnitStatus.DEFECTIVE, UnitStatus.IN_REPAIR] } })
+        .select('productId status createdAt')
+        .lean()
+        .exec(),
+      sales.find({ saleDate: { $gte: since } }).select('items').lean().exec(),
+    ]);
+    const sold = new Map<string, number>();
+    for (const s of recent as any[]) for (const i of s.items || []) sold.set(String(i.productId), (sold.get(String(i.productId)) || 0) + (i.quantity || 0));
+    return buildStockModels({ products, units: open as any[], sold, periodDays, showCosts: opts.showCosts });
   }
 
   async getMovements(db: string, limit = 100) {

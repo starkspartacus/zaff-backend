@@ -25,6 +25,14 @@ export class StockController {
     return this.stockService.getOverview(db);
   }
 
+  @Get('models')
+  @ApiOperation({ summary: 'Stock par modèle et capacité (familles → versions, rythme de vente, âge du stock)' })
+  @ApiQuery({ name: 'days', required: false, description: 'Période de vente observée (7 à 365 jours, 30 par défaut)' })
+  byModel(@CurrentTenant('databaseName') db: string, @CurrentUser() user: any, @Query('days') days?: string) {
+    // Les vendeurs voient le stock, jamais les prix d'achat ni la valeur du stock
+    return this.stockService.byModel(db, { days: days ? Number(days) : 30, showCosts: user?.role !== Role.SELLER && user?.role !== 'standard' });
+  }
+
   @Get('movements')
   @ApiOperation({ summary: 'Historique des mouvements de stock' })
   @ApiQuery({ name: 'limit', required: false })

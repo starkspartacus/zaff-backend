@@ -61,6 +61,17 @@ describe('Contrat de vente et garantie', () => {
     expect(warranty.blocks[0].text).toContain('Boutique Test');
   });
 
+  it('ticket de caisse : montants de la vente, vendeur, client, fin de garantie et QR de chaque appareil', async () => {
+    const r = await contracts.receipt(tenant, saleId);
+    expect(r.shop).toMatchObject({ name: 'Boutique Test', phone: '+2250700000001', currency: 'F CFA' });
+    expect(r.sale).toMatchObject({ invoiceNumber: 1001, sellerName: 'Awa', total: 850000, paymentLabel: 'Espèces', change: 0 });
+    expect(r.sale.customer).toMatchObject({ name: 'Michel' });
+    expect(r.items[0]).toMatchObject({ productName: 'iPhone 15 Pro', serialNumber: 'IMEI1', total: 850000 });
+    const months = (new Date(r.items[0].warrantyEnd!).getTime() - new Date(r.sale.date!).getTime()) / (30 * 24 * 3600 * 1000);
+    expect(Math.round(months)).toBe(6);
+    expect((await contracts.verify(r.items[0].verifyCode!)).status).toBe('active');
+  });
+
   it("l'article retours reprend la politique de la boutique", async () => {
     tenant.settings.returnPolicy = { returnWindowDays: 3, restockingFeePercent: 10 };
     const doc = await contracts.forSale(tenant, saleId);
